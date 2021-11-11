@@ -246,7 +246,7 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
             optimizer.zero_grad()
             X, y = X.to(device), y.to(device)
             y_hat = net(X)
-            l = loss(y_hat, y)
+            l = loss(y_hat, y) + y_hat[y == 0].sum()/(y[y == 0].numel() + 0.01)
             l.backward()
             optimizer.step()
             with torch.no_grad():
@@ -284,6 +284,8 @@ def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend):
     if legend:
         axes.legend(legend)
     axes.grid()
+    
+    
 
 
 class Animator:  # @save
