@@ -121,6 +121,8 @@ net_resnet18 = nn.Sequential(b1, b2, b3, b4, b5,
                              nn.AdaptiveAvgPool2d((1, 1)),
                              nn.Flatten(), nn.Linear(512, 2))
 
+
+
 b2_34 = nn.Sequential(*resnet_block(64, 64, 3, first_block=True))
 b3_34 = nn.Sequential(*resnet_block(64, 128, 4))
 b4_34 = nn.Sequential(*resnet_block(128, 256, 6))
