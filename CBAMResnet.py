@@ -51,27 +51,28 @@ class CBAM(nn.Module):
 
 
 class ResBlock_CBAM(nn.Module):
-    def __init__(self,in_places, places, stride=1,downsampling=False, expansion = 4):
-        super(ResBlock_CBAM,self).__init__()
+    def __init__(self, in_places, places, stride=1, downsampling=False, expansion=4):
+        super(ResBlock_CBAM, self).__init__()
         self.expansion = expansion
         self.downsampling = downsampling
 
         self.bottleneck = nn.Sequential(
-            nn.Conv2d(in_channels=in_places,out_channels=places,kernel_size=1,stride=1, bias=False),
+            nn.Conv2d(in_channels=in_places, out_channels=places, kernel_size=1, stride=1, bias=False),
             nn.BatchNorm2d(places),
             nn.ReLU(inplace=True),
             nn.Conv2d(in_channels=places, out_channels=places, kernel_size=3, stride=stride, padding=1, bias=False),
             nn.BatchNorm2d(places),
             nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels=places, out_channels=places*self.expansion, kernel_size=1, stride=1, bias=False),
-            nn.BatchNorm2d(places*self.expansion),
+            nn.Conv2d(in_channels=places, out_channels=places * self.expansion, kernel_size=1, stride=1, bias=False),
+            nn.BatchNorm2d(places * self.expansion),
         )
-        self.cbam = CBAM(channel=places*self.expansion)
+        self.cbam = CBAM(channel=places * self.expansion)
 
         if self.downsampling:
             self.downsample = nn.Sequential(
-                nn.Conv2d(in_channels=in_places, out_channels=places*self.expansion, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(places*self.expansion)
+                nn.Conv2d(in_channels=in_places, out_channels=places * self.expansion, kernel_size=1, stride=stride,
+                          bias=False),
+                nn.BatchNorm2d(places * self.expansion)
             )
         self.relu = nn.ReLU(inplace=True)
 
@@ -91,6 +92,6 @@ class ResBlock_CBAM(nn.Module):
 model = ResBlock_CBAM(in_places=16, places=4)
 print(model)
 
-input = torch.randn(1, 16, 64, 64)
-out = model(input)
+inputs = torch.randn(1, 16, 64, 64)
+out = model(inputs)
 print(out.shape)
