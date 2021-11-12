@@ -54,6 +54,51 @@ class Accumulator:  # @save
         return self.data[idx]
 
 
+class ChannelAttentionModule(nn.Module):
+    def __init__(self, channel, ratio=16):
+        super(ChannelAttentionModule, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+
+        self.shared_MLP = nn.Sequential(
+            nn.Conv2d(channel, channel // ratio, 1, bias=False),
+            nn.ReLU(),
+            nn.Conv2d(channel // ratio, channel, 1, bias=False)
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avgout = self.shared_MLP(self.avg_pool(x))
+        maxout = self.shared_MLP(self.max_pool(x))
+        return self.sigmoid(avgout + maxout)
+
+
+class SpatialAttentionModule(nn.Module):
+    def __init__(self):
+        super(SpatialAttentionModule, self).__init__()
+        self.conv2d = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7, stride=1, padding=3)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avgout = torch.mean(x, dim=1, keepdim=True)
+        maxout, _ = torch.max(x, dim=1, keepdim=True)
+        out = torch.cat([avgout, maxout], dim=1)
+        out = self.sigmoid(self.conv2d(out))
+        return out
+
+
+class CBAM(nn.Module):
+    def __init__(self, channel):
+        super(CBAM, self).__init__()
+        self.channel_attention = ChannelAttentionModule(channel)
+        self.spatial_attention = SpatialAttentionModule()
+
+    def forward(self, x):
+        out = self.channel_attention(x) * x
+        out = self.spatial_attention(out) * out
+        return out
+
+
 class Residual(nn.Module):  # @save定义残差快
     def __init__(self, input_channels, num_channels,use_1x1conv=False, strides=1):
         super().__init__()
@@ -81,53 +126,6 @@ class Residual(nn.Module):  # @save定义残差快
         return F.relu(Y)
 
 
-class ChannelAttentionModule(nn.Module):
-    def __init__(self, channel, ratio=16):
-        super(ChannelAttentionModule, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.max_pool = nn.AdaptiveMaxPool2d(1)
-
-        self.shared_MLP = nn.Sequential(
-            nn.Conv2d(channel, channel // ratio, 1, bias=False),
-            nn.ReLU(),
-            nn.Conv2d(channel // ratio, channel, 1, bias=False)
-        )
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        avgout = self.shared_MLP(self.avg_pool(x))
-        print(avgout.shape)
-        maxout = self.shared_MLP(self.max_pool(x))
-        return self.sigmoid(avgout + maxout)
-
-
-class SpatialAttentionModule(nn.Module):
-    def __init__(self):
-        super(SpatialAttentionModule, self).__init__()
-        self.conv2d = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7, stride=1, padding=3)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        avgout = torch.mean(x, dim=1, keepdim=True)
-        maxout, _ = torch.max(x, dim=1, keepdim=True)
-        out = torch.cat([avgout, maxout], dim=1)
-        out = self.sigmoid(self.conv2d(out))
-        return out
-
-
-class CBAM(nn.Module):
-    def __init__(self, channel):
-        super(CBAM, self).__init__()
-        self.channel_attention = ChannelAttentionModule(channel)
-        self.spatial_attention = SpatialAttentionModule()
-
-    def forward(self, x):
-        out = self.channel_attention(x) * x
-        print('outchannels:{}'.format(out.shape))
-        out = self.spatial_attention(out) * out
-        return out
-
-
 # 加载数据集
 train_root = r'dataset_im/train_data_im'
 test_root = r'dataset_im/test_data_im'
@@ -136,7 +134,7 @@ transform = transforms.Compose([transforms.Resize((64, 64)),
                                 transforms.ToTensor()])
 train_data = ImageFolder(train_root, transform=transform)
 test_data = ImageFolder(test_root, transform=transform)
-batch_size = 32
+batch_size = 128
 train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
 test_iter = data.DataLoader(test_data, batch_size)
 
@@ -231,7 +229,7 @@ class Animator:  # @save
     def __init__(self, xlabel=None, ylabel=None, legend=None, xlim=None,
                  ylim=None, xscale='linear', yscale='linear',
                  fmts=('-', 'm--', 'g-.', 'r:'), nrows=1, ncols=1,
-                 figsize=(3.5, 2.5)):
+                 figsize=(15, 8)):
         # 增量地绘制多条线
         if legend is None:
             legend = []
@@ -336,7 +334,8 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
             optimizer.zero_grad()
             X, y = X.to(device), y.to(device)
             y_hat = net(X)
-            l = loss(y_hat, y) + y_hat[y == 0].sum() / (y[y == 0].numel() + 0.01)
+            y_temp = y_hat.argmax(axis=1)
+            l = loss(y_hat, y) + 3 * y_temp[y == 0].sum() / (y[y == 0].numel() + 0.01)
             l.backward()
             optimizer.step()
             with torch.no_grad():
@@ -364,5 +363,5 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
 
 
 lr, num_epochs = 0.0005, 200
-net = resnet_34()
-train_ch6(net, train_iter, test_iter, num_epochs, lr, try_gpu())
+net = resnet_18()
+train_ch6(net, train_iter, test_iter, num_epochs, lr, try_gpu(0))
