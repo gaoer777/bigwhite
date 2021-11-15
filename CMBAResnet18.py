@@ -126,19 +126,6 @@ class Residual(nn.Module):  # @save定义残差快
         return F.relu(Y)
 
 
-# 加载数据集
-train_root = r'dataset_im/train_data_im'
-test_root = r'dataset_im/test_data_im'
-transform = transforms.Compose([transforms.Resize((64, 64)),
-                                transforms.Grayscale(1),
-                                transforms.ToTensor()])
-train_data = ImageFolder(train_root, transform=transform)
-test_data = ImageFolder(test_root, transform=transform)
-batch_size = 128
-train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
-test_iter = data.DataLoader(test_data, batch_size)
-
-
 # 定义计算准确性、敏感性
 def accuracy(y_hat, y):
     if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
@@ -182,7 +169,7 @@ def evaluate_accuracy_gpu(net, data_iter, device=None):  # @save
     return metric[0] / metric[1]
 
 
-def evaluate_sensitivity_gpu(net, data_iter, device=None):  # @save
+def evaluate_sensitivity_gpu(net, data_iter, lst, device=None):  # @save
     """使用GPU计算模型在数据集上的敏感度。"""
     if isinstance(net, torch.nn.Module):
         net.eval()  # 设置为评估模式
@@ -190,14 +177,17 @@ def evaluate_sensitivity_gpu(net, data_iter, device=None):  # @save
             device = next(iter(net.parameters())).device
     # 正确预测的数量，总预测的数量
     metric = Accumulator(2)
-    for X, y in data_iter:
+    for i, X, y in enumerate(data_iter):
         if isinstance(X, list):
             # BERT微调所需的（之后将介绍）
             X = [x.to(device) for x in X]
         else:
             X = X.to(device)
         y = y.to(device)
-        metric.add(sensitivity(net(X), y), y[y == 0].numel())
+        y_hat = net(X)
+        if y == 0 & y_hat == 1:
+            lst[i][1] += 1
+        metric.add(sensitivity(y_hat, y), y[y == 0].numel())
     return 1 - metric[0] / metric[1]
 
 
@@ -359,9 +349,26 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
             # torch.save(metric, 'ds_csv_metric18_adam')
             # torch.save(epoch, 'ds_csv_epoch18_adam')
         animator.add(epoch + 1, (None, None, test_acc))
-    animator.show()
+        animator.show()
 
 
+# 加载数据集
+# test_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\test_data_im'
+# train_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\train_data_im'
+train_root = r'dataset_im/train_data_im'
+test_root = r'dataset_im/test_data_im'
+transform = transforms.Compose([transforms.Resize((64, 64)),
+                                transforms.Grayscale(1),
+                                transforms.ToTensor()])
+train_data = ImageFolder(train_root, transform=transform)
+test_data = ImageFolder(test_root, transform=transform)
+batch_size = 128
+train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
+test_iter = data.DataLoader(test_data, len(test_data.imgs))
+
+#训练
 lr, num_epochs = 0.0005, 200
 net = resnet_18()
+lst = [list(row) for row in test_data.imgs]
 train_ch6(net, train_iter, test_iter, num_epochs, lr, try_gpu(0))
+lst[lst[:][1] == 0] = []
