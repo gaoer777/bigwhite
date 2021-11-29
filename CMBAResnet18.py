@@ -1,5 +1,6 @@
 import torch
 import time
+import shutil
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils import data
@@ -177,7 +178,7 @@ def evaluate_sensitivity_gpu(net, data_iter, lst, device=None):  # @save
             device = next(iter(net.parameters())).device
     # 正确预测的数量，总预测的数量
     metric = Accumulator(2)
-    for i, X, y in enumerate(data_iter):
+    for i, (X, y) in enumerate(data_iter):
         if isinstance(X, list):
             # BERT微调所需的（之后将介绍）
             X = [x.to(device) for x in X]
@@ -185,9 +186,11 @@ def evaluate_sensitivity_gpu(net, data_iter, lst, device=None):  # @save
             X = X.to(device)
         y = y.to(device)
         y_hat = net(X)
-        if y == 0 & y_hat == 1:
-            lst[i][1] += 1
         metric.add(sensitivity(y_hat, y), y[y == 0].numel())
+        y_temp = y_hat.argmax(axis=1)
+        for j in range(0, y.numel()):
+            if  y[j]!=y_temp[j]:
+                lst[j][1] += 1
     return 1 - metric[0] / metric[1]
 
 
@@ -271,7 +274,7 @@ def resnet_block(input_channels, num_channels, num_residuals,
 
 # 定义Resnet18
 def resnet_18():
-    b1 = nn.Sequential(nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3),
+    b1 = nn.Sequential(nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
                        nn.BatchNorm2d(64), nn.ReLU(),
                        nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
     b2 = nn.Sequential(*resnet_block(64, 64, 2, first_block=True))
@@ -286,7 +289,7 @@ def resnet_18():
 
 # 定义Resnet34
 def resnet_34():
-    b1 = nn.Sequential(nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3),
+    b1 = nn.Sequential(nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
                        nn.BatchNorm2d(64), nn.ReLU(),
                        nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
     b2_34 = nn.Sequential(*resnet_block(64, 64, 3, first_block=True))
@@ -300,7 +303,7 @@ def resnet_34():
 
 
 # train
-def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
+def train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, device):
     """用GPU训练模型(在第六章定义)。"""
 
     def init_weights(m):
@@ -325,7 +328,7 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
             X, y = X.to(device), y.to(device)
             y_hat = net(X)
             y_temp = y_hat.argmax(axis=1)
-            l = loss(y_hat, y) + 3 * y_temp[y == 0].sum() / (y[y == 0].numel() + 0.01)
+            l = loss(y_hat, y) #+ 3 * y_temp[y == 0].sum() / (y[y == 0].numel() + 0.01)
             l.backward()
             optimizer.step()
             with torch.no_grad():
@@ -339,7 +342,7 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
 
         if epoch % 10 == 0:
             test_acc = evaluate_accuracy_gpu(net, test_iter)
-            se = evaluate_sensitivity_gpu(net, test_iter)
+            se = evaluate_sensitivity_gpu(net, test_iter, lst)
             print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, '
                   f'test acc {test_acc:.3f},'
                   f'senstivity {se:.3f},'
@@ -349,26 +352,36 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
             # torch.save(metric, 'ds_csv_metric18_adam')
             # torch.save(epoch, 'ds_csv_epoch18_adam')
         animator.add(epoch + 1, (None, None, test_acc))
-        animator.show()
+    animator.show()
 
 
 # 加载数据集
 # test_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\test_data_im'
 # train_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\train_data_im'
-train_root = r'dataset_im/train_data_im'
-test_root = r'dataset_im/test_data_im'
+# train_root = r'dataset_im1113/train_data_im'
+# test_root = r'dataset_im1113/test_data_im'
+train_root = r'dataset211118_1/train_data'
+test_root = r'dataset211118_1/test_data'
+
 transform = transforms.Compose([transforms.Resize((64, 64)),
-                                transforms.Grayscale(1),
+                                #transforms.Grayscale(1),
                                 transforms.ToTensor()])
 train_data = ImageFolder(train_root, transform=transform)
 test_data = ImageFolder(test_root, transform=transform)
-batch_size = 128
+batch_size = 32
 train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
 test_iter = data.DataLoader(test_data, len(test_data.imgs))
 
-#训练
+# 训练
 lr, num_epochs = 0.0005, 200
 net = resnet_18()
-lst = [list(row) for row in test_data.imgs]
-train_ch6(net, train_iter, test_iter, num_epochs, lr, try_gpu(0))
-lst[lst[:][1] == 0] = []
+lst = [list(row) for row in test_data.imgs]#store wrong test datasets in training proccess
+train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, try_gpu(0))
+for i in range(0, len(lst)):
+    if  lst[i][1] <10:
+        del lst[i]
+for ele in lst:
+    element, indx = ele[0], ele[1]
+    elements = element.split('/')
+    new_name = '/home/gsw/Desktop/test_wrong_set/'+elements[-2]+'_'+str(indx)+'_'+elements[-1]
+    shutil.copy(element, new_name)

@@ -1,232 +1,12 @@
 import torch
 from torch.utils import data
 import time
-import math
 import numpy as np
 import matplotlib.pyplot as plt
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from torch import nn
 from torch.nn import functional as F
-
-# 定义自己的数据集合
-train_root = r'dataset_im/train_data_im'
-test_root = r'dataset_im/test_data_im'
-transform = transforms.Compose([transforms.Resize((64, 64)),
-                                transforms.Grayscale(1),
-                                transforms.ToTensor()])
-train_data = ImageFolder(train_root, transform=transform)
-test_data = ImageFolder(test_root, transform=transform)
-# print(dataset.class_to_idx)
-# plt.imshow(dataset[100][0])
-# plt.show()
-batch_size = 64
-train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
-test_iter = data.DataLoader(test_data, batch_size)
-
-
-# 定义准确性
-def accuracy(y_hat, y):
-    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
-        y_hat = y_hat.argmax(axis=1)
-    cmp = y_hat.type(y.dtype) == y
-    return float(cmp.type(y.dtype).sum())
-
-
-def evaluate_accuracy(net, data_iter):  # @save
-    """计算在指定数据集上模型的精度。"""
-    if isinstance(net, torch.nn.Module):
-        net.eval()  # 将模型设置为评估模式
-    metric = Accumulator(2)  # 正确预测数、预测总数
-    for X, y in data_iter:
-        metric.add(accuracy(net(X), y), y.numel())
-    return metric[0] / metric[1]
-
-
-class Accumulator:  # @save
-    """在`n`个变量上累加。"""
-
-    def __init__(self, n):
-        self.data = [0.0] * n
-
-    def add(self, *args):
-        self.data = [a + float(b) for a, b in zip(self.data, args)]
-
-    def reset(self):
-        self.data = [0.0] * len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data[idx]
-
-
-class Residual(nn.Module):  # @save定义残差快
-    def __init__(self, input_channels, num_channels,
-                 use_1x1conv=False, strides=1):
-        super().__init__()
-        self.conv1 = nn.Conv2d(input_channels, num_channels,
-                               kernel_size=3, padding=1, stride=strides)
-        self.conv2 = nn.Conv2d(num_channels, num_channels,
-                               kernel_size=3, padding=1)
-        if use_1x1conv:
-            self.conv3 = nn.Conv2d(input_channels, num_channels,
-                                   kernel_size=1, stride=strides)
-        else:
-            self.conv3 = None
-        self.bn1 = nn.BatchNorm2d(num_channels)
-        self.bn2 = nn.BatchNorm2d(num_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.fc1 = nn.Conv2d(num_channels, num_channels // 16, kernel_size=1)
-        self.fc2 = nn.Conv2d(num_channels // 16, num_channels, kernel_size=1)
-
-    def forward(self, X):
-        Y = F.relu(self.bn1(self.conv1(X)))
-        Y = self.bn2(self.conv2(Y))
-        if self.conv3:
-            X = self.conv3(X)
-        # Squeeze
-        w = F.avg_pool2d(Y, Y.size(2))
-        w = self.fc1(w)
-        w = F.relu(w)
-        w = torch.sigmoid((self.fc2(w)))
-        # Excitation
-        Y = Y * w
-
-        Y += X
-        return F.relu(Y)
-
-
-b1 = nn.Sequential(nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3),
-                   nn.BatchNorm2d(64), nn.ReLU(),
-                   nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
-
-
-def resnet_block(input_channels, num_channels, num_residuals,
-                 first_block=False):
-    blk = []
-    for i in range(num_residuals):
-        if i == 0 and not first_block:
-            blk.append(Residual(input_channels, num_channels,
-                                use_1x1conv=True, strides=2))
-        else:
-            blk.append(Residual(num_channels, num_channels))
-    return blk
-
-
-b2 = nn.Sequential(*resnet_block(64, 64, 2, first_block=True))
-b3 = nn.Sequential(*resnet_block(64, 128, 2))
-b4 = nn.Sequential(*resnet_block(128, 256, 2))
-b5 = nn.Sequential(*resnet_block(256, 512, 2))
-
-net_resnet18 = nn.Sequential(b1, b2, b3, b4, b5,
-                             nn.AdaptiveAvgPool2d((1, 1)),
-                             nn.Flatten(), nn.Linear(512, 2))
-
-
-
-b2_34 = nn.Sequential(*resnet_block(64, 64, 3, first_block=True))
-b3_34 = nn.Sequential(*resnet_block(64, 128, 4))
-b4_34 = nn.Sequential(*resnet_block(128, 256, 6))
-b5_34 = nn.Sequential(*resnet_block(256, 512, 3))
-
-net_resnet34 = nn.Sequential(b1, b2_34, b3_34, b4_34, b5_34,
-                             nn.AdaptiveAvgPool2d((1, 1)),
-                             nn.Flatten(), nn.Linear(512, 2))
-
-
-def evaluate_accuracy_gpu(net, data_iter, device=None):  # @save
-    """使用GPU计算模型在数据集上的精度。"""
-    if isinstance(net, torch.nn.Module):
-        net.eval()  # 设置为评估模式
-        if not device:
-            device = next(iter(net.parameters())).device
-    # 正确预测的数量，总预测的数量
-    metric = Accumulator(2)
-    for X, y in data_iter:
-        if isinstance(X, list):
-            # BERT微调所需的（之后将介绍）
-            X = [x.to(device) for x in X]
-        else:
-            X = X.to(device)
-        y = y.to(device)
-        metric.add(accuracy(net(X), y), y.numel())
-    return metric[0] / metric[1]
-
-def sensitivity(y_hat, y):
-    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
-        y_hat = y_hat.argmax(axis=1)
-    return float(y_hat[y == 0].sum())
-
-def evaluate_sensitivity_gpu(net, data_iter, device=None):  # @save
-    """使用GPU计算模型在数据集上的精度。"""
-    if isinstance(net, torch.nn.Module):
-        net.eval()  # 设置为评估模式
-        if not device:
-            device = next(iter(net.parameters())).device
-    # 正确预测的数量，总预测的数量
-    metric = Accumulator(2)
-    for X, y in data_iter:
-        if isinstance(X, list):
-            # BERT微调所需的（之后将介绍）
-            X = [x.to(device) for x in X]
-        else:
-            X = X.to(device)
-        y = y.to(device)
-        metric.add(sensitivity(net(X), y), y[y == 0].numel())
-    return 1 - metric[0] / metric[1]
-
-# @save
-def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
-    """用GPU训练模型(在第六章定义)。"""
-
-    def init_weights(m):
-        if type(m) == nn.Linear or type(m) == nn.Conv2d:
-            nn.init.xavier_uniform_(m.weight)
-
-    net.apply(init_weights)
-    print('training on', device)
-    net.to(device)
-    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
-    loss = nn.CrossEntropyLoss()
-    animator = Animator(xlabel='epoch', xlim=[1, num_epochs],
-                        legend=['train loss', 'train acc', 'test acc'])
-    timer, num_batches = Timer(), len(train_iter)
-    for epoch in range(num_epochs):
-        # 训练损失之和，训练准确率之和，范例数
-        metric = Accumulator(3)
-        net.train()
-        for i, (X, y) in enumerate(train_iter):
-            timer.start()
-            optimizer.zero_grad()
-            X, y = X.to(device), y.to(device)
-            y_hat = net(X)
-            y_temp = y_hat.argmax(axis=1)
-            se = y_temp[y == 0].sum()/(y[y == 0].numel()+0.1)
-            l = loss(y_hat, y) + se
-            l.backward()
-            optimizer.step()
-            with torch.no_grad():
-                metric.add(l * X.shape[0], accuracy(y_hat, y), X.shape[0])
-            timer.stop()
-            train_l = metric[0] / metric[2]
-            train_acc = metric[1] / metric[2]
-            if (i + 1) % (num_batches // 5) == 0 or i == num_batches - 1:
-                animator.add(epoch + (i + 1) / num_batches,
-                             (train_l, train_acc, None))
-
-        if epoch % 10 == 0:
-            test_acc = evaluate_accuracy_gpu(net, test_iter)
-            se = evaluate_sensitivity_gpu(net, test_iter)
-            print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, '
-                  f'test acc {test_acc:.3f},'
-                  f'senstivity {se:.3f},'
-                  f'proccessed {epoch * 100 / num_epochs:.2f}%')
-
-            # torch.save(net.state_dict(), 'dsim_resnet34')
-            # torch.save(metric, 'dsim_metric34_adam')
-            # torch.save(epoch, 'dsim_epoch34_adam')
-        animator.add(epoch + 1, (None, None, test_acc))
-    animator.show()
-    animator.save('dsim_epoch34_adam.png')
 
 
 def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend):
@@ -286,10 +66,9 @@ class Animator:  # @save
 
     def save(self, name):
         plt.savefig(fname=name)
-
-
 #         display.display(self.fig)
 #         display.clear_output(wait=True)
+
 
 class Timer:  # @save
     """记录多次运行时间。"""
@@ -320,6 +99,58 @@ class Timer:  # @save
         return np.array(self.times).cumsum().tolist()
 
 
+class Accumulator:  # @save
+    """在`n`个变量上累加。"""
+
+    def __init__(self, n):
+        self.data = [0.0] * n
+
+    def add(self, *args):
+        self.data = [a + float(b) for a, b in zip(self.data, args)]
+
+    def reset(self):
+        self.data = [0.0] * len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+
+class Residual(nn.Module):  # @save定义残差快
+    def __init__(self, input_channels, num_channels,
+                 use_1x1conv=False, strides=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_channels, num_channels,
+                               kernel_size=3, padding=1, stride=strides)
+        self.conv2 = nn.Conv2d(num_channels, num_channels,
+                               kernel_size=3, padding=1)
+        if use_1x1conv:
+            self.conv3 = nn.Conv2d(input_channels, num_channels,
+                                   kernel_size=1, stride=strides)
+        else:
+            self.conv3 = None
+        self.bn1 = nn.BatchNorm2d(num_channels)
+        self.bn2 = nn.BatchNorm2d(num_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.fc1 = nn.Conv2d(num_channels, num_channels // 16, kernel_size=1)
+        self.fc2 = nn.Conv2d(num_channels // 16, num_channels, kernel_size=1)
+
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = self.bn2(self.conv2(Y))
+        if self.conv3:
+            X = self.conv3(X)
+        # Squeeze
+        w = F.avg_pool2d(Y, Y.size(2))
+        w = self.fc1(w)
+        w = F.relu(w)
+        w = torch.sigmoid((self.fc2(w)))
+        # Excitation
+        Y = Y * w
+
+        Y += X
+        return F.relu(Y)
+
+
 def try_gpu(i=0):  # @save
     """如果存在，则返回gpu(i)，否则返回cpu()。"""
     if torch.cuda.device_count() >= i + 1:
@@ -327,5 +158,182 @@ def try_gpu(i=0):  # @save
     return torch.device('cpu')
 
 
+# 定义准确性
+def accuracy(y_hat, y):
+    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
+        y_hat = y_hat.argmax(axis=1)
+    cmp = y_hat.type(y.dtype) == y
+    return float(cmp.type(y.dtype).sum())
+
+
+def evaluate_accuracy(net, data_iter):  # @save
+    """计算在指定数据集上模型的精度。"""
+    if isinstance(net, torch.nn.Module):
+        net.eval()  # 将模型设置为评估模式
+    metric = Accumulator(2)  # 正确预测数、预测总数
+    for X, y in data_iter:
+        metric.add(accuracy(net(X), y), y.numel())
+    return metric[0] / metric[1]
+
+
+def evaluate_accuracy_gpu(net, data_iter, device=None):  # @save
+    """使用GPU计算模型在数据集上的精度。"""
+    if isinstance(net, torch.nn.Module):
+        net.eval()  # 设置为评估模式
+        if not device:
+            device = next(iter(net.parameters())).device
+    # 正确预测的数量，总预测的数量
+    metric = Accumulator(2)
+    for X, y in data_iter:
+        if isinstance(X, list):
+            # BERT微调所需的（之后将介绍）
+            X = [x.to(device) for x in X]
+        else:
+            X = X.to(device)
+        y = y.to(device)
+        metric.add(accuracy(net(X), y), y.numel())
+    return metric[0] / metric[1]
+
+
+def sensitivity(y_hat, y):
+    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
+        y_hat = y_hat.argmax(axis=1)
+    return float(y_hat[y == 0].sum())
+
+
+def evaluate_sensitivity_gpu(net, data_iter, device=None):  # @save
+    """使用GPU计算模型在数据集上的精度。"""
+    if isinstance(net, torch.nn.Module):
+        net.eval()  # 设置为评估模式
+        if not device:
+            device = next(iter(net.parameters())).device
+    # 正确预测的数量，总预测的数量
+    metric = Accumulator(2)
+    for X, y in data_iter:
+        if isinstance(X, list):
+            # BERT微调所需的（之后将介绍）
+            X = [x.to(device) for x in X]
+        else:
+            X = X.to(device)
+        y = y.to(device)
+        metric.add(sensitivity(net(X), y), y[y == 0].numel())
+    return 1 - metric[0] / metric[1]
+
+
+def resnet_block(input_channels, num_channels, num_residuals,
+                 first_block=False):
+    blk = []
+    for i in range(num_residuals):
+        if i == 0 and not first_block:
+            blk.append(Residual(input_channels, num_channels,
+                                use_1x1conv=True, strides=2))
+        else:
+            blk.append(Residual(num_channels, num_channels))
+    return blk
+
+
+def serenet18():
+    b1 = nn.Sequential(nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
+                       nn.BatchNorm2d(64), nn.ReLU(),
+                       nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+    b2 = nn.Sequential(*resnet_block(64, 64, 2, first_block=True))
+    b3 = nn.Sequential(*resnet_block(64, 128, 2))
+    b4 = nn.Sequential(*resnet_block(128, 256, 2))
+    b5 = nn.Sequential(*resnet_block(256, 512, 2))
+
+    net_resnet18 = nn.Sequential(b1, b2, b3, b4, b5,
+                                 nn.AdaptiveAvgPool2d((1, 1)),
+                                 nn.Flatten(), nn.Linear(512, 2))
+    return net_resnet18
+
+
+def seresnet34():
+    b1 = nn.Sequential(nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
+                       nn.BatchNorm2d(64), nn.ReLU(),
+                       nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+    b2_34 = nn.Sequential(*resnet_block(64, 64, 3, first_block=True))
+    b3_34 = nn.Sequential(*resnet_block(64, 128, 4))
+    b4_34 = nn.Sequential(*resnet_block(128, 256, 6))
+    b5_34 = nn.Sequential(*resnet_block(256, 512, 3))
+
+    net_resnet34 = nn.Sequential(b1, b2_34, b3_34, b4_34, b5_34,
+                                 nn.AdaptiveAvgPool2d((1, 1)),
+                                 nn.Flatten(), nn.Linear(512, 2))
+    return seresnet34()
+
+
+def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
+    """用GPU训练模型(在第六章定义)。"""
+
+    def init_weights(m):
+        if type(m) == nn.Linear or type(m) == nn.Conv2d:
+            nn.init.xavier_uniform_(m.weight)
+
+    net.apply(init_weights)
+    print('training on', device)
+    net.to(device)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    loss = nn.CrossEntropyLoss()
+    animator = Animator(xlabel='epoch', xlim=[1, num_epochs],
+                        legend=['train loss', 'train acc', 'test acc'])
+    timer, num_batches = Timer(), len(train_iter)
+    for epoch in range(num_epochs):
+        # 训练损失之和，训练准确率之和，范例数
+        metric = Accumulator(3)
+        net.train()
+        for i, (X, y) in enumerate(train_iter):
+            timer.start()
+            optimizer.zero_grad()
+            X, y = X.to(device), y.to(device)
+            y_hat = net(X)
+            y_temp = y_hat.argmax(axis=1)
+            se = y_temp[y == 0].sum()/(y[y == 0].numel()+0.1)
+            l = loss(y_hat, y) #+ se
+            l.backward()
+            optimizer.step()
+            with torch.no_grad():
+                metric.add(l * X.shape[0], accuracy(y_hat, y), X.shape[0])
+            timer.stop()
+            train_l = metric[0] / metric[2]
+            train_acc = metric[1] / metric[2]
+            if (i + 1) % (num_batches // 5) == 0 or i == num_batches - 1:
+                animator.add(epoch + (i + 1) / num_batches,
+                             (train_l, train_acc, None))
+
+        if epoch % 10 == 0:
+            test_acc = evaluate_accuracy_gpu(net, test_iter)
+            se = evaluate_sensitivity_gpu(net, test_iter)
+            print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, '
+                  f'test acc {test_acc:.3f},'
+                  f'senstivity {se:.3f},'
+                  f'proccessed {epoch * 100 / num_epochs:.2f}%')
+
+            # torch.save(net.state_dict(), 'dsim_resnet34')
+            # torch.save(metric, 'dsim_metric34_adam')
+            # torch.save(epoch, 'dsim_epoch34_adam')
+        animator.add(epoch + 1, (None, None, test_acc))
+    animator.show()
+    animator.save('dsim_epoch34_adam.png')
+
+
+# 加载数据集
+# train_root = r'dataset_im/train_data_im'
+# test_root = r'dataset_im/test_data_im'
+train_root = r'dataset211118_1/train_data'
+test_root = r'dataset211118_1/test_data'
+transform = transforms.Compose([transforms.Resize((64, 64)),
+                                #transforms.Grayscale(1),
+                                transforms.ToTensor()])
+train_data = ImageFolder(train_root, transform=transform)
+test_data = ImageFolder(test_root, transform=transform)
+# print(dataset.class_to_idx)
+# plt.imshow(dataset[100][0])
+# plt.show()
+batch_size = 32
+train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
+test_iter = data.DataLoader(test_data, batch_size)
+
+# 训练
 lr, num_epochs = 0.0005, 200
-train_ch6(net_resnet18, train_iter, test_iter, num_epochs, lr, try_gpu())
+net_seresnet = serenet18()
+train_ch6(net_seresnet, train_iter, test_iter, num_epochs, lr, try_gpu())

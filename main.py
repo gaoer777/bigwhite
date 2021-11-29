@@ -8,24 +8,123 @@ from torchvision.datasets import ImageFolder
 from torch import nn
 from torch.nn import functional as F
 
-# 定义自己的数据集合
-# train_root = r'dataset_csv/train_data_csv'
-# test_root = r'dataset_csv/test_data_csv'
-train_root = r'dataset_im/train_data_im'
-test_root = r'dataset_im/test_data_im'
+
+class Accumulator:  # @save
+    """在`n`个变量上累加。"""
+
+    def __init__(self, n):
+        self.data = [0.0] * n
+
+    def add(self, *args):
+        self.data = [a + float(b) for a, b in zip(self.data, args)]
+
+    def reset(self):
+        self.data = [0.0] * len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
 
 
-transform = transforms.Compose([transforms.Resize((64, 64)),
-                                transforms.Grayscale(1),
-                                transforms.ToTensor()])
-train_data = ImageFolder(train_root, transform=transform)
-test_data = ImageFolder(test_root, transform=transform)
+class Animator:  # @save
+    """在动画中绘制数据。"""
 
-batch_size = 32
-train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
-test_iter = data.DataLoader(test_data, batch_size)
+    def __init__(self, xlabel=None, ylabel=None, legend=None, xlim=None,
+                 ylim=None, xscale='linear', yscale='linear',
+                 fmts=('-', 'm--', 'g-.', 'r:'), nrows=1, ncols=1,
+                 figsize=(3.5, 2.5)):
+        # 增量地绘制多条线
+        if legend is None:
+            legend = []
+        # use_svg_display()
+        self.fig, self.axes = plt.subplots(nrows, ncols, figsize=figsize)
+        if nrows * ncols == 1:
+            self.axes = [self.axes, ]
+        # 使用lambda函数捕获参数
+        self.config_axes = lambda: set_axes(
+            self.axes[0], xlabel, ylabel, xlim, ylim, xscale, yscale, legend)
+        self.X, self.Y, self.fmts = None, None, fmts
+
+    def add(self, x, y):
+        # 向图表中添加多个数据点
+        if not hasattr(y, "__len__"):
+            y = [y]
+        n = len(y)
+        if not hasattr(x, "__len__"):
+            x = [x] * n
+        if not self.X:
+            self.X = [[] for _ in range(n)]
+        if not self.Y:
+            self.Y = [[] for _ in range(n)]
+        for i, (a, b) in enumerate(zip(x, y)):
+            if a is not None and b is not None:
+                self.X[i].append(a)
+                self.Y[i].append(b)
+        self.axes[0].cla()
+        for x, y, fmt in zip(self.X, self.Y, self.fmts):
+            self.axes[0].plot(x, y, fmt)
+        self.config_axes()
+
+    def show(self):
+        plt.show()
 
 
+#         display.display(self.fig)
+#         display.clear_output(wait=True)
+
+
+class Timer:  # @save
+    """记录多次运行时间。"""
+
+    def __init__(self):
+        self.times = []
+        self.start()
+
+    def start(self):
+        """启动计时器。"""
+        self.tik = time.time()
+
+    def stop(self):
+        """停止计时器并将时间记录在列表中。"""
+        self.times.append(time.time() - self.tik)
+        return self.times[-1]
+
+    def avg(self):
+        """返回平均时间。"""
+        return sum(self.times) / len(self.times)
+
+    def sum(self):
+        """返回时间总和。"""
+        return sum(self.times)
+
+    def cumsum(self):
+        """返回累计时间。"""
+        return np.array(self.times).cumsum().tolist()
+
+
+class Residual(nn.Module):  # @save定义残差快
+    def __init__(self, input_channels, num_channels,
+                 use_1x1conv=False, strides=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_channels, num_channels,
+                               kernel_size=3, padding=1, stride=strides)
+        self.conv2 = nn.Conv2d(num_channels, num_channels,
+                               kernel_size=3, padding=1)
+        if use_1x1conv:
+            self.conv3 = nn.Conv2d(input_channels, num_channels,
+                                   kernel_size=1, stride=strides)
+        else:
+            self.conv3 = None
+        self.bn1 = nn.BatchNorm2d(num_channels)
+        self.bn2 = nn.BatchNorm2d(num_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = self.bn2(self.conv2(Y))
+        if self.conv3:
+            X = self.conv3(X)
+        Y += X
+        return F.relu(Y)
 
 
 # class datasets(data.Dataset):
@@ -84,16 +183,38 @@ test_iter = data.DataLoader(test_data, batch_size)
 # test_iter = data.DataLoader(test_data, batch_size)
 
 # 定义准确性
+def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend):
+    """设置matplotlib的轴。"""
+    axes.set_xlabel(xlabel)
+    axes.set_ylabel(ylabel)
+    axes.set_xscale(xscale)
+    axes.set_yscale(yscale)
+    axes.set_xlim(xlim)
+    axes.set_ylim(ylim)
+    if legend:
+        axes.legend(legend)
+    axes.grid()
+
+
+def try_gpu(i=0):  # @save
+    """如果存在，则返回gpu(i)，否则返回cpu()。"""
+    if torch.cuda.device_count() >= i + 1:
+        return torch.device(f'cuda:{i}')
+    return torch.device('cpu')
+
+
 def accuracy(y_hat, y):
     if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
         y_hat = y_hat.argmax(axis=1)
     cmp = y_hat.type(y.dtype) == y
     return float(cmp.type(y.dtype).sum())
 
+
 def sensitivity(y_hat, y):
     if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
         y_hat = y_hat.argmax(axis=1)
     return float(y_hat[y == 0].sum())
+
 
 def evaluate_accuracy(net, data_iter):  # @save
     """计算在指定数据集上模型的精度。"""
@@ -103,84 +224,6 @@ def evaluate_accuracy(net, data_iter):  # @save
     for X, y in data_iter:
         metric.add(accuracy(net(X), y), y.numel())
     return metric[0] / metric[1]
-
-
-class Accumulator:  # @save
-    """在`n`个变量上累加。"""
-
-    def __init__(self, n):
-        self.data = [0.0] * n
-
-    def add(self, *args):
-        self.data = [a + float(b) for a, b in zip(self.data, args)]
-
-    def reset(self):
-        self.data = [0.0] * len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data[idx]
-
-
-class Residual(nn.Module):  # @save定义残差快
-    def __init__(self, input_channels, num_channels,
-                 use_1x1conv=False, strides=1):
-        super().__init__()
-        self.conv1 = nn.Conv2d(input_channels, num_channels,
-                               kernel_size=3, padding=1, stride=strides)
-        self.conv2 = nn.Conv2d(num_channels, num_channels,
-                               kernel_size=3, padding=1)
-        if use_1x1conv:
-            self.conv3 = nn.Conv2d(input_channels, num_channels,
-                                   kernel_size=1, stride=strides)
-        else:
-            self.conv3 = None
-        self.bn1 = nn.BatchNorm2d(num_channels)
-        self.bn2 = nn.BatchNorm2d(num_channels)
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, X):
-        Y = F.relu(self.bn1(self.conv1(X)))
-        Y = self.bn2(self.conv2(Y))
-        if self.conv3:
-            X = self.conv3(X)
-        Y += X
-        return F.relu(Y)
-
-
-b1 = nn.Sequential(nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3),
-                   nn.BatchNorm2d(64), nn.ReLU(),
-                   nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
-
-
-def resnet_block(input_channels, num_channels, num_residuals,
-                 first_block=False):
-    blk = []
-    for i in range(num_residuals):
-        if i == 0 and not first_block:
-            blk.append(Residual(input_channels, num_channels,
-                                use_1x1conv=True, strides=2))
-        else:
-            blk.append(Residual(num_channels, num_channels))
-    return blk
-
-
-b2 = nn.Sequential(*resnet_block(64, 64, 2, first_block=True))
-b3 = nn.Sequential(*resnet_block(64, 128, 2))
-b4 = nn.Sequential(*resnet_block(128, 256, 2))
-b5 = nn.Sequential(*resnet_block(256, 512, 2))
-
-net_resnet18 = nn.Sequential(b1, b2, b3, b4, b5,
-                             nn.AdaptiveAvgPool2d((1, 1)),
-                             nn.Flatten(), nn.Linear(512, 2))
-
-b2_34 = nn.Sequential(*resnet_block(64, 64, 3, first_block=True))
-b3_34 = nn.Sequential(*resnet_block(64, 128, 4))
-b4_34 = nn.Sequential(*resnet_block(128, 256, 6))
-b5_34 = nn.Sequential(*resnet_block(256, 512, 3))
-
-net_resnet34 = nn.Sequential(b1, b2_34, b3_34, b4_34, b5_34,
-                             nn.AdaptiveAvgPool2d((1, 1)),
-                             nn.Flatten(), nn.Linear(512, 2))
 
 
 def evaluate_accuracy_gpu(net, data_iter, device=None):  # @save
@@ -201,6 +244,7 @@ def evaluate_accuracy_gpu(net, data_iter, device=None):  # @save
         metric.add(accuracy(net(X), y), y.numel())
     return metric[0] / metric[1]
 
+
 def evaluate_sensitivity_gpu(net, data_iter, device=None):  # @save
     """使用GPU计算模型在数据集上的精度。"""
     if isinstance(net, torch.nn.Module):
@@ -219,7 +263,49 @@ def evaluate_sensitivity_gpu(net, data_iter, device=None):  # @save
         metric.add(sensitivity(net(X), y), y[y == 0].numel())
     return 1 - metric[0] / metric[1]
 
-# @save
+
+def resnet_block(input_channels, num_channels, num_residuals,
+                 first_block=False):
+    blk = []
+    for i in range(num_residuals):
+        if i == 0 and not first_block:
+            blk.append(Residual(input_channels, num_channels,
+                                use_1x1conv=True, strides=2))
+        else:
+            blk.append(Residual(num_channels, num_channels))
+    return blk
+
+
+def resnet18():
+    b1 = nn.Sequential(nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
+                       nn.BatchNorm2d(64), nn.ReLU(),
+                       nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+    b2 = nn.Sequential(*resnet_block(64, 64, 2, first_block=True))
+    b3 = nn.Sequential(*resnet_block(64, 128, 2))
+    b4 = nn.Sequential(*resnet_block(128, 256, 2))
+    b5 = nn.Sequential(*resnet_block(256, 512, 2))
+
+    net_resnet18 = nn.Sequential(b1, b2, b3, b4, b5,
+                             nn.AdaptiveAvgPool2d((1, 1)),
+                             nn.Flatten(), nn.Linear(512, 2))
+    return net_resnet18
+
+
+def resnet34():
+    b1 = nn.Sequential(nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
+                       nn.BatchNorm2d(64), nn.ReLU(),
+                       nn.MaxPool2d(kernel_size=3, stride=2, padding=1))
+    b2_34 = nn.Sequential(*resnet_block(64, 64, 3, first_block=True))
+    b3_34 = nn.Sequential(*resnet_block(64, 128, 4))
+    b4_34 = nn.Sequential(*resnet_block(128, 256, 6))
+    b5_34 = nn.Sequential(*resnet_block(256, 512, 3))
+
+    net_resnet34 = nn.Sequential(b1, b2_34, b3_34, b4_34, b5_34,
+                                 nn.AdaptiveAvgPool2d((1, 1)),
+                                 nn.Flatten(), nn.Linear(512, 2))
+    return net_resnet34
+
+
 def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
     """用GPU训练模型(在第六章定义)。"""
 
@@ -244,7 +330,7 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
             optimizer.zero_grad()
             X, y = X.to(device), y.to(device)
             y_hat = net(X)
-            l = loss(y_hat, y) + y_hat[y == 0].sum()/(y[y == 0].numel() + 0.01)
+            l = loss(y_hat, y)
             l.backward()
             optimizer.step()
             with torch.no_grad():
@@ -271,102 +357,23 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
     animator.show()
 
 
-def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend):
-    """设置matplotlib的轴。"""
-    axes.set_xlabel(xlabel)
-    axes.set_ylabel(ylabel)
-    axes.set_xscale(xscale)
-    axes.set_yscale(yscale)
-    axes.set_xlim(xlim)
-    axes.set_ylim(ylim)
-    if legend:
-        axes.legend(legend)
-    axes.grid()
-    
-    
+# 加载数据集
+# train_root = r'dataset_csv/train_data_csv'
+# test_root = r'dataset_csv/test_data_csv'
+# train_root = r'dataset_im/train_data_im'
+# test_root = r'dataset_im/test_data_im'
+train_root = r'dataset211118_1/train_data'
+test_root = r'dataset211118_1/test_data'
+transform = transforms.Compose([transforms.Resize((64, 64)),
+                                #transforms.Grayscale(1),
+                                transforms.ToTensor()])
+train_data = ImageFolder(train_root, transform=transform)
+test_data = ImageFolder(test_root, transform=transform)
+batch_size = 32
+train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
+test_iter = data.DataLoader(test_data, batch_size)
 
-
-class Animator:  # @save
-    """在动画中绘制数据。"""
-
-    def __init__(self, xlabel=None, ylabel=None, legend=None, xlim=None,
-                 ylim=None, xscale='linear', yscale='linear',
-                 fmts=('-', 'm--', 'g-.', 'r:'), nrows=1, ncols=1,
-                 figsize=(3.5, 2.5)):
-        # 增量地绘制多条线
-        if legend is None:
-            legend = []
-        # use_svg_display()
-        self.fig, self.axes = plt.subplots(nrows, ncols, figsize=figsize)
-        if nrows * ncols == 1:
-            self.axes = [self.axes, ]
-        # 使用lambda函数捕获参数
-        self.config_axes = lambda: set_axes(
-            self.axes[0], xlabel, ylabel, xlim, ylim, xscale, yscale, legend)
-        self.X, self.Y, self.fmts = None, None, fmts
-
-    def add(self, x, y):
-        # 向图表中添加多个数据点
-        if not hasattr(y, "__len__"):
-            y = [y]
-        n = len(y)
-        if not hasattr(x, "__len__"):
-            x = [x] * n
-        if not self.X:
-            self.X = [[] for _ in range(n)]
-        if not self.Y:
-            self.Y = [[] for _ in range(n)]
-        for i, (a, b) in enumerate(zip(x, y)):
-            if a is not None and b is not None:
-                self.X[i].append(a)
-                self.Y[i].append(b)
-        self.axes[0].cla()
-        for x, y, fmt in zip(self.X, self.Y, self.fmts):
-            self.axes[0].plot(x, y, fmt)
-        self.config_axes()
-
-    def show(self):
-        plt.show()
-
-
-#         display.display(self.fig)
-#         display.clear_output(wait=True)
-
-class Timer:  # @save
-    """记录多次运行时间。"""
-
-    def __init__(self):
-        self.times = []
-        self.start()
-
-    def start(self):
-        """启动计时器。"""
-        self.tik = time.time()
-
-    def stop(self):
-        """停止计时器并将时间记录在列表中。"""
-        self.times.append(time.time() - self.tik)
-        return self.times[-1]
-
-    def avg(self):
-        """返回平均时间。"""
-        return sum(self.times) / len(self.times)
-
-    def sum(self):
-        """返回时间总和。"""
-        return sum(self.times)
-
-    def cumsum(self):
-        """返回累计时间。"""
-        return np.array(self.times).cumsum().tolist()
-
-
-def try_gpu(i=1):  # @save
-    """如果存在，则返回gpu(i)，否则返回cpu()。"""
-    if torch.cuda.device_count() >= i + 1:
-        return torch.device(f'cuda:{i}')
-    return torch.device('cpu')
-
-
+# 训练
 lr, num_epochs = 0.0005, 200
-train_ch6(net_resnet34, train_iter, test_iter, num_epochs, lr, try_gpu())
+net_resnet = resnet18()
+train_ch6(net_resnet, train_iter, test_iter, num_epochs, lr, try_gpu())
