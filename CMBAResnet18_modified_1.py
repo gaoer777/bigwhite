@@ -101,7 +101,6 @@ class Animator:  # @save
 class ChannelAttentionModule(nn.Module):
     def __init__(self, channel, ratio=16):
         super(ChannelAttentionModule, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
 
         self.shared_MLP = nn.Sequential(
@@ -112,21 +111,23 @@ class ChannelAttentionModule(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        avgout = self.shared_MLP(self.avg_pool(x))
         maxout = self.shared_MLP(self.max_pool(x))
-        return self.sigmoid(avgout + maxout)
+        minout = self.shared_MLP(-self.max_pool(-x))
+        return self.sigmoid(maxout - minout)
 
 
 class SpatialAttentionModule(nn.Module):
     def __init__(self):
         super(SpatialAttentionModule, self).__init__()
-        self.conv2d = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7, stride=1, padding=3)
+        self.conv2d = nn.Conv2d(in_channels=3, out_channels=1, kernel_size=7, stride=1, padding=3)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         avgout = torch.mean(x, dim=1, keepdim=True)
         maxout, _ = torch.max(x, dim=1, keepdim=True)
-        out = torch.cat([avgout, maxout], dim=1)
+        minout, _ = torch.max(-x, dim=1, keepdim=True)
+        minout = -minout
+        out = torch.cat([maxout, avgout, minout], dim=1)
         out = self.sigmoid(self.conv2d(out))
         return out
 
@@ -134,7 +135,7 @@ class SpatialAttentionModule(nn.Module):
 class CBAM(nn.Module):
     def __init__(self, channel):
         super(CBAM, self).__init__()
-        self.channel_attention = ChannelAttentionModule(channel)
+        self.channel_attention = ChannelAttentionModule(channel, 4)
         self.spatial_attention = SpatialAttentionModule()
 
     def forward(self, x):
@@ -328,7 +329,7 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, device):
             X, y = X.to(device), y.to(device)
             y_hat = net(X)
             y_temp = y_hat.argmax(axis=1)
-            l = loss(y_hat, y) + 20 * y_temp[y == 0].sum() / (y[y == 0].numel() + 0.01)
+            l = loss(y_hat, y) + y_temp[y == 0].sum() / (y[y == 0].numel() + 0.01)
             l.backward()
             optimizer.step()
             with torch.no_grad():
@@ -360,8 +361,8 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, device):
 # train_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\train_data_im'
 # train_root = r'dataset_im1113/train_data_im'
 # test_root = r'dataset_im1113/test_data_im'
-train_root = r'dataset211118_4/train_data'
-test_root = r'dataset211118_4/test_data'
+train_root = r'dataset211118_4_deleteSomeDefects/train_data'
+test_root = r'dataset211118_4_deleteSomeDefects/test_data'
 # train_root = r'dataset211118_3/dataset211118_3_fdt/train_data'
 # test_root = r'dataset211118_3/dataset211118_3_fdt/test_data'
 
@@ -370,12 +371,12 @@ transform = transforms.Compose([transforms.Resize((64, 64)),
                                 transforms.ToTensor()])
 train_data = ImageFolder(train_root, transform=transform)
 test_data = ImageFolder(test_root, transform=transform)
-batch_size = 128
+batch_size = 32
 train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
 test_iter = data.DataLoader(test_data, len(test_data.imgs))
 
 # 训练
-lr, num_epochs = 0.0005, 100
+lr, num_epochs = 0.0005, 50
 net = resnet_18()
 lst = [list(row) for row in test_data.imgs]#store wrong test datasets in training proccess
 train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, try_gpu(0))
@@ -385,9 +386,8 @@ for i in range(0, len(lst)):
         del lst[a]
     else:
         a += 1
-print(lst)
 for ele in lst:
     element, indx = ele[0], ele[1]
     elements = element.split('/')
-    new_name = '/home/gsw/Desktop/test_wrong_set/'+elements[-2]+'_'+str(indx)+'_'+elements[-1]
+    new_name = '/home/gsw/Desktop/test_wrong_set_modified/'+elements[-2]+'_'+str(indx)+'_'+elements[-1]
     shutil.copy(element, new_name)

@@ -31,7 +31,7 @@ class Animator:  # @save
     def __init__(self, xlabel=None, ylabel=None, legend=None, xlim=None,
                  ylim=None, xscale='linear', yscale='linear',
                  fmts=('-', 'm--', 'g-.', 'r:'), nrows=1, ncols=1,
-                 figsize=(3.5, 2.5)):
+                 figsize=(15, 10)):
         # 增量地绘制多条线
         if legend is None:
             legend = []
@@ -362,8 +362,10 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lr, device):
 # test_root = r'dataset_csv/test_data_csv'
 # train_root = r'dataset_im/train_data_im'
 # test_root = r'dataset_im/test_data_im'
-train_root = r'dataset211118_1/train_data'
-test_root = r'dataset211118_1/test_data'
+# train_root = r'dataset211118_1/train_data'
+# test_root = r'dataset211118_1/test_data'
+train_root = r'dataset211118_4/train_data'
+test_root = r'dataset211118_4/test_data'
 transform = transforms.Compose([transforms.Resize((64, 64)),
                                 #transforms.Grayscale(1),
                                 transforms.ToTensor()])
