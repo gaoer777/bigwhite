@@ -143,7 +143,7 @@ class CBAM(nn.Module):
         return out
 
 
-class Residual(nn.Module):  # @save定义残差快
+class Residual(nn.Module):
     def __init__(self, input_channels, num_channels,use_1x1conv=False, strides=1):
         super().__init__()
         self.conv1 = nn.Conv2d(input_channels, num_channels,
