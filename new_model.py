@@ -99,15 +99,15 @@ class Animator:  # @save
 
 
 class ChannelAttentionModuleSelf(nn.Module):
-    def __init__(self, channel, ratio=16):
-        super(ChannelAttentionModule_self, self).__init__()
+    def __init__(self, channel, ratio=9):
+        super(ChannelAttentionModuleSelf, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
 
         self.shared_MLP = nn.Sequential(
-            nn.Conv2d(channel, channel // ratio, 1, bias=False, groups=3),
+            nn.Conv2d(channel, (channel // ratio)*3, 1, bias=False, groups=3),
             nn.ReLU(),
-            nn.Conv2d(channel // ratio, channel, 1, bias=False, groups=3)
+            nn.Conv2d((channel // ratio)*3, channel, 1, bias=False, groups=3)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -120,35 +120,39 @@ class ChannelAttentionModuleSelf(nn.Module):
 class SpatialAttentionModuleSelf(nn.Module):
     def __init__(self):
         super(SpatialAttentionModuleSelf, self).__init__()
-        self.conv2d = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7,
-                                stride=1, padding=3, groups=3)
+        self.conv2d_0 = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7,
+                                stride=1, padding=3)
+        self.conv2d_1 = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7,
+                                stride=1, padding=3)
+        self.conv2d_2 = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7,
+                                stride=1, padding=3)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         x_list = x.chunk(3, dim=1)
-        avgout_0 = torch.mean(x[0], dim=1, keepdim=True)
-        maxout_0, _ = torch.max(x[0], dim=1, keepdim=True)
-        avgout_1 = torch.mean(x[1], dim=1, keepdim=True)
-        maxout_1, _ = torch.max(x[1], dim=1, keepdim=True)
-        avgout_2 = torch.mean(x[2], dim=1, keepdim=True)
-        maxout_2, _ = torch.max(x[2], dim=1, keepdim=True)
+        avgout_0 = torch.mean(x_list[0].data, dim=1, keepdim=True)
+        maxout_0, _ = torch.max(x_list[0].data, dim=1, keepdim=True)
+        avgout_1 = torch.mean(x_list[1].data, dim=1, keepdim=True)
+        maxout_1, _ = torch.max(x_list[1].data, dim=1, keepdim=True)
+        avgout_2 = torch.mean(x_list[2].data, dim=1, keepdim=True)
+        maxout_2, _ = torch.max(x_list[2].data, dim=1, keepdim=True)
         out_0 = torch.cat([avgout_0, maxout_0], dim=1)
-        out_0 = self.sigmoid(self.conv2d(out_0))
-        x_list[0] = x_list[0] * out_0
+        out_0 = self.sigmoid(self.conv2d_0(out_0))
+        x_list[0].data *= out_0
         out_1 = torch.cat([avgout_1, maxout_1], dim=1)
-        out_1 = self.sigmoid(self.conv2d(out_1))
-        x_list[1] = x_list[1] * out_1
+        out_1 = self.sigmoid(self.conv2d_1(out_1))
+        x_list[1].data *= out_1
         out_2 = torch.cat([avgout_2, maxout_2], dim=1)
-        out_2 = self.sigmoid(self.conv2d(out_2))
-        x_list[2] = x_list[2] * out_2
+        out_2 = self.sigmoid(self.conv2d_2(out_2))
+        x_list[2].data *= out_2
 
-        x = torch.cat(x_list, dim=1)
-        return x
+        x_list = torch.cat(x_list, dim=1)
+        return x_list
 
 
 class CBAMSelf(nn.Module):
     def __init__(self, channel):
-        super(CBAM, self).__init__()
+        super(CBAMSelf, self).__init__()
         self.channel_attention = ChannelAttentionModuleSelf(channel)
         self.spatial_attention = SpatialAttentionModuleSelf()
 
@@ -159,15 +163,15 @@ class CBAMSelf(nn.Module):
 
 
 class ChannelAttentionModule(nn.Module):
-    def __init__(self, channel, ratio=16):
+    def __init__(self, channel, ratio=9):
         super(ChannelAttentionModule, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
 
         self.shared_MLP = nn.Sequential(
-            nn.Conv2d(channel, channel // ratio, 1, bias=False),
+            nn.Conv2d(channel, (channel // ratio)*3, 1, bias=False),
             nn.ReLU(),
-            nn.Conv2d(channel // ratio, channel, 1, bias=False)
+            nn.Conv2d((channel // ratio)*3, channel, 1, bias=False)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -187,8 +191,8 @@ class SpatialAttentionModule(nn.Module):
     def forward(self, x):
         avgout = torch.mean(x, dim=1, keepdim=True)
         maxout, _ = torch.max(x, dim=1, keepdim=True)
-        out = torch.cat([avgout, maxout], dim=1)
-        out = self.sigmoid(self.conv2d(out))
+        out1 = torch.cat([avgout, maxout], dim=1)
+        out = self.sigmoid(self.conv2d(out1))
         return out
 
 
@@ -197,23 +201,21 @@ class CBAM(nn.Module):
         super(CBAM, self).__init__()
         self.channel_attention = ChannelAttentionModule(channel)
         self.spatial_attention = SpatialAttentionModule()
-        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
         out1 = self.channel_attention(x) * x
         out2 = self.spatial_attention(x) * out1
-        return relu(out2)
+        return out2
 
 
 class SelfCBAMResidual(nn.Module):
-    def __init__(self, input_channels, num_channels,use_1x1conv=False, strides=1):
+    def __init__(self, input_channels, num_channels, use_1x1conv=False, strides=1):
         super().__init__()
         self.conv1 = nn.Conv2d(input_channels, num_channels, groups=3,
                                kernel_size=3, padding=1, stride=strides)
         self.conv2 = nn.Conv2d(num_channels, num_channels, groups=3,
                                kernel_size=3, padding=1)
         self.cbamself = CBAMSelf(num_channels)
-        self.cbam = CBAM(num_channels)
         if use_1x1conv:
             self.conv3 = nn.Conv2d(input_channels, num_channels, groups=3,
                                    kernel_size=1, stride=strides)
@@ -240,11 +242,9 @@ class CBAMResidual(nn.Module):
                                kernel_size=3, padding=1, stride=strides)
         self.conv2 = nn.Conv2d(num_channels, num_channels,
                                kernel_size=3, padding=1)
-        self.cbamself = CBAMSelf(num_channels)
         self.cbam = CBAM(num_channels)
         self.bn1 = nn.BatchNorm2d(num_channels)
         self.bn2 = nn.BatchNorm2d(num_channels)
-        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, X):
         Y = F.relu(self.bn1(self.conv1(X)))
@@ -345,12 +345,12 @@ def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend):
 
 # 定义残差层
 def attention_block(input_channels, num_channels, num_self_cbam_residuals
-                 ,first_block=False):
+                    , first_block=False):
     blk = []
     for i in range(num_self_cbam_residuals):
         if i == 0 and not first_block:
             blk.append(SelfCBAMResidual(input_channels, num_channels,
-                                use_1x1conv=True, strides=2))
+                                        use_1x1conv=True, strides=2))
         else:
             blk.append(SelfCBAMResidual(num_channels, num_channels))
     blk.append(CBAMResidual(num_channels, num_channels))
@@ -359,14 +359,15 @@ def attention_block(input_channels, num_channels, num_self_cbam_residuals
 
 # 定义Resnet18
 def new_cbam_net():
-    b1 = nn.Sequential(nn.Conv2d(3, 64, kernel_size=7, padding=3, groups=3),
-                       nn.BatchNorm2d(64), nn.ReLU())
-    b2 = nn.Sequential(*attention_block(64, 64, 2, first_block=True))
-    b3 = nn.Sequential(*attention_block(64, 128, 2))
-    b4 = nn.Sequential(*attention_block(128, 256, 2))
+    b1 = nn.Sequential(nn.Conv2d(3, 63, kernel_size=7, padding=3, groups=3, stride=2),
+                       nn.BatchNorm2d(63), nn.ReLU())
+    b2 = nn.Sequential(*attention_block(63, 63, 2, first_block=True))
+    b3 = nn.Sequential(*attention_block(63, 126, 2))
+    b4 = nn.Sequential(*attention_block(126, 252, 2))
+    b5 = nn.Sequential(*attention_block(252, 504, 2))
     new_net = nn.Sequential(b1, b2, b3, b4, b5,
-                                 nn.AdaptiveAvgPool2d((1, 1)),
-                                 nn.Flatten(), nn.Linear(512, 2))
+                            nn.AdaptiveAvgPool2d((1, 1)),
+                            nn.Flatten(), nn.Linear(504, 2))
     return new_net
 
 
@@ -420,7 +421,7 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, device):
             # torch.save(metric, 'ds_csv_metric18_adam')
             # torch.save(epoch, 'ds_csv_epoch18_adam')
         animator.add(epoch + 1, (None, None, test_acc))
-    #animator.show()
+    # animator.show()
 
 
 # 加载数据集
@@ -428,24 +429,26 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, device):
 # train_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\train_data_im'
 # train_root = r'dataset_im1113/train_data_im'
 # test_root = r'dataset_im1113/test_data_im'
-train_root = r'dataset211118_4/train_data'
-test_root = r'dataset211118_4/test_data'
+train_root = r'dataset211118_4_deleteSomeDefects/train_data'
+test_root = r'dataset211118_4_deleteSomeDefects/test_data'
+# train_root = r'dataset211118_4/train_data'
+# test_root = r'dataset211118_4/test_data'
 # train_root = r'dataset211118_3/dataset211118_3_fdt/train_data'
 # test_root = r'dataset211118_3/dataset211118_3_fdt/test_data'
 
 transform = transforms.Compose([transforms.Resize((64, 64)),
-                                #transforms.Grayscale(1),
+                                # transforms.Grayscale(1),
                                 transforms.ToTensor()])
 train_data = ImageFolder(train_root, transform=transform)
 test_data = ImageFolder(test_root, transform=transform)
-batch_size = 128
+batch_size = 32
 train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
 test_iter = data.DataLoader(test_data, len(test_data.imgs))
 
 # 训练
-lr, num_epochs = 0.0005, 100
-net = resnet_18()
-lst = [list(row) for row in test_data.imgs]#store wrong test datasets in training proccess
+lr, num_epochs = 0.0005, 50
+net = new_cbam_net()
+lst = [list(row) for row in test_data.imgs]  # store wrong test datasets in training proccess
 train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, try_gpu(0))
 a = 0
 for i in range(0, len(lst)):
@@ -454,8 +457,8 @@ for i in range(0, len(lst)):
     else:
         a += 1
 print(lst)
-for ele in lst:
-    element, indx = ele[0], ele[1]
-    elements = element.split('/')
-    new_name = '/home/gsw/Desktop/test_wrong_set/'+elements[-2]+'_'+str(indx)+'_'+elements[-1]
-    shutil.copy(element, new_name)
+# for ele in lst:
+#     element, indx = ele[0], ele[1]
+#     elements = element.split('/')
+#     new_name = '/home/gsw/Desktop/test_wrong_set/'+elements[-2]+'_'+str(indx)+'_'+elements[-1]
+#     shutil.copy(element, new_name)
