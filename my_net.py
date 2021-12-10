@@ -25,5 +25,5 @@ def new_cbam_net():
     b5 = nn.Sequential(*attention_block(252, 504, 2))
     new_net = nn.Sequential(b1, b2, b3, b4, b5,
                             nn.AdaptiveAvgPool2d((1, 1)),
-                            nn.Flatten(), nn.Linear(504, 2))
+                            nn.Flatten(), nn.Linear(504, 10))
     return new_net

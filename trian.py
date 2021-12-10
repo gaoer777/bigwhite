@@ -1,3 +1,5 @@
+import torchvision.datasets
+
 import UtilFunctions as utf
 import my_net
 import torch
@@ -19,7 +21,7 @@ def train(net, train_iter, test_iter, num_epochs, lst, lr, device):
     net.to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     loss = nn.CrossEntropyLoss()
-    animator = utf.Animator(xlabel='epoch', xlim=[1, num_epochs],
+    animator = utf.Animator(xlabel='epoch', xlim=[1, num_epochs], ylim=[0, 1.2],
                         legend=['train loss', 'train acc', 'test acc'])
     timer, num_batches = utf.Timer(), len(train_iter)
     for epoch in range(num_epochs):
@@ -46,10 +48,10 @@ def train(net, train_iter, test_iter, num_epochs, lst, lr, device):
 
         if epoch % 2 == 0:
             test_acc = utf.evaluate_accuracy_gpu(net, test_iter)
-            se = utf.evaluate_sensitivity_gpu(net, test_iter, lst)
+            #se = utf.evaluate_sensitivity_gpu(net, test_iter, lst)
             print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, '
                   f'test acc {test_acc:.3f},'
-                  f'senstivity {se:.3f},'
+            #     f'senstivity {se:.3f},'
                   f'proccessed {epoch * 100 / num_epochs:.2f}%')
 
             # torch.save(net.state_dict(), 'ds_csv_resnet18_adam.params')
@@ -71,27 +73,31 @@ test_root = r'dataset211118_4_deleteSomeDefects/test_data'
 # train_root = r'dataset211118_3/dataset211118_3_fdt/train_data'
 # test_root = r'dataset211118_3/dataset211118_3_fdt/test_data'
 
-transform = transforms.Compose([transforms.Resize((64, 64)),
-                                # transforms.Grayscale(1),
+
+transform = transforms.Compose([#transforms.Resize((64, 64)),
+                                  # transforms.Grayscale(1),
                                 transforms.ToTensor()])
-train_data = ImageFolder(train_root, transform=transform)
-test_data = ImageFolder(test_root, transform=transform)
-batch_size = 32
+train_data = torchvision.datasets.CIFAR10(root='/opt/disk1/YANGSHUBIN/Resnet/homework4/Cifar-10/', transform=transform, train=True, download=False)
+test_data = torchvision.datasets.CIFAR10(root='/opt/disk1/YANGSHUBIN/Resnet/homework4/Cifar-10/', transform=transform, train=False, download=False)
+# train_data = ImageFolder(train_root, transform=transform)
+# test_data = ImageFolder(test_root, transform=transform)
+batch_size = 64
 train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
-test_iter = data.DataLoader(test_data, len(test_data.imgs))
+test_iter = data.DataLoader(test_data, batch_size)
 
 # 训练
-lr, num_epochs = 0.0005, 50
+lr, num_epochs = 0.0005, 20
 net = my_net.new_cbam_net()
-lst = [list(row) for row in test_data.imgs]  # store wrong test datasets in training proccess
+lst = []
+#lst = [list(row) for row in test_data.imgs]  # store wrong test datasets in training proccess
 train(net, train_iter, test_iter, num_epochs, lst, lr, utf.try_gpu(0))
-a = 0
-for i in range(0, len(lst)):
-    if lst[a][1] < 5:
-        del lst[a]
-    else:
-        a += 1
-print(lst)
+# a = 0
+# for i in range(0, len(lst)):
+#     if lst[a][1] < 5:
+#         del lst[a]
+#     else:
+#         a += 1
+# print(lst)
 # for ele in lst:
 #     element, indx = ele[0], ele[1]
 #     elements = element.split('/')
