@@ -1,3 +1,4 @@
+import shutil
 import time
 import torch
 import numpy as np
@@ -105,6 +106,13 @@ def sensitivity(y_hat, y):
     return float(y_hat[y == 0].sum())
 
 
+def false_positive(y_hat, y):
+    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
+        y_hat = y_hat.argmax(axis=1)
+        a, b = float(y[y_hat == 0].sum()), y_hat[y_hat == 0].numel()
+    return float(y[y_hat == 0].sum())
+
+
 def evaluate_accuracy(net, data_iter):  # @save
     """计算在指定数据集上模型的精度。"""
     if isinstance(net, torch.nn.Module):
@@ -112,7 +120,7 @@ def evaluate_accuracy(net, data_iter):  # @save
     metric = Accumulator(2)  # 正确预测数、预测总数
     for X, y in data_iter:
         metric.add(accuracy(net(X), y), y.numel())
-    return metric[0] / metric[1]
+    return metric[0] / (metric[1]+0.0001)
 
 
 def evaluate_accuracy_gpu(net, data_iter, device=None):  # @save
@@ -125,7 +133,6 @@ def evaluate_accuracy_gpu(net, data_iter, device=None):  # @save
     metric = Accumulator(2)
     for X, y in data_iter:
         if isinstance(X, list):
-            # BERT微调所需的（之后将介绍）
             X = [x.to(device) for x in X]
         else:
             X = X.to(device)
@@ -134,7 +141,7 @@ def evaluate_accuracy_gpu(net, data_iter, device=None):  # @save
     return metric[0] / metric[1]
 
 
-def evaluate_sensitivity_gpu(net, data_iter, lst, device=None):  # @save
+def evaluate_sensitivity_gpu(net, data_iter, lst, device=None):
     """使用GPU计算模型在数据集上的敏感度。"""
     if isinstance(net, torch.nn.Module):
         net.eval()  # 设置为评估模式
@@ -144,7 +151,6 @@ def evaluate_sensitivity_gpu(net, data_iter, lst, device=None):  # @save
     metric = Accumulator(2)
     for i, (X, y) in enumerate(data_iter):
         if isinstance(X, list):
-            # BERT微调所需的（之后将介绍）
             X = [x.to(device) for x in X]
         else:
             X = X.to(device)
@@ -152,10 +158,32 @@ def evaluate_sensitivity_gpu(net, data_iter, lst, device=None):  # @save
         y_hat = net(X)
         metric.add(sensitivity(y_hat, y), y[y == 0].numel())
         y_temp = y_hat.argmax(axis=1)
-        for j in range(0, y.numel()):
-            if y[j] != y_temp[j]:
-                lst[j][1] += 1
+        if len(lst) > 0:
+            for j in range(0, y.numel()):
+                if y[j] != y_temp[j]:
+                    lst[j][1] += 1
     return 1 - metric[0] / metric[1]
+
+
+def evaluate_false_positive_gpu(net, data_iter, device=None):  # @save
+    """使用GPU计算模型在数据集上的FP。"""
+    if isinstance(net, torch.nn.Module):
+        net.eval()  # 设置为评估模式
+        if not device:
+            device = next(iter(net.parameters())).device
+    # 正确预测的数量，总预测的数量
+    metric = Accumulator(2)
+    for i, (X, y) in enumerate(data_iter):
+        if isinstance(X, list):
+            X = [x.to(device) for x in X]
+        else:
+            X = X.to(device)
+        y = y.to(device)
+        y_hat = net(X)
+        y_temp = y_hat.argmax(axis=1)
+        metric.add(false_positive(y_hat, y), y_temp[y_temp == 0].numel())
+
+    return metric[0] / metric[1]
 
 
 # 设置训练设备
@@ -178,3 +206,19 @@ def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend):
     if legend:
         axes.legend(legend)
     axes.grid()
+
+
+def save_wrong_set(lst, save=True):
+    if save:
+        a = 0
+        for i in range(0, len(lst)):
+            if lst[a][1] < 5:
+                del lst[a]
+            else:
+                a += 1
+        print(lst)
+        for ele in lst:
+            element, indx = ele[0], ele[1]
+            elements = element.split('/')
+            new_name = '/home/gsw/Desktop/test_wrong_set/' + elements[-2] + '_' + str(indx) + '_' + elements[-1]
+            shutil.copy(element, new_name)
