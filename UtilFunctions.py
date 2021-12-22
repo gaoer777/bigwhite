@@ -183,7 +183,7 @@ def evaluate_false_positive_gpu(net, data_iter, device=None):  # @save
         y_temp = y_hat.argmax(axis=1)
         metric.add(false_positive(y_hat, y), y_temp[y_temp == 0].numel())
 
-    return metric[0] / metric[1]
+    return metric[0] / (metric[1]+0.0001)
 
 
 # 设置训练设备

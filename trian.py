@@ -91,12 +91,14 @@ def train_my_net():
     # test_root = r'dataset_im1113/test_data_im'
     # train_root = r'dataset211118_4_deleteSomeDefects/train_data'
     # test_root = r'dataset211118_4_deleteSomeDefects/test_data'
-    train_root = r'dataset211118_4/train_data'
-    test_root = r'dataset211118_4/test_data'
+    # train_root = r'dataset211118_4/train_data'
+    # test_root = r'dataset211118_4/test_data'
     # train_root = r'dataset211118_3/dataset211118_3_fdt/train_data'
     # test_root = r'dataset211118_3/dataset211118_3_fdt/test_data'
+    train_root = r'dataset211213_4_128/train_data'
+    test_root = r'dataset211213_4_128/test_data'
 
-    transform = transforms.Compose([transforms.Resize((64, 64)),
+    transform = transforms.Compose([transforms.Resize((64, 128)),
                                     # transforms.Grayscale(1),
                                     transforms.ToTensor()])
     train_data = ImageFolder(train_root, transform=transform)
@@ -107,10 +109,10 @@ def train_my_net():
 
     # 训练
     lr, num_epochs = 0.0005, 50
-    # net = my_net.new_cbam_net()
+    net = my_net.new_cbam_net()
     # net = Resnet.resnet18()
     # net = SEResnet.serenet18()
-    net = CBAMResnet.CBAMResnet_18()
+    # net = CBAMResnet.CBAMResnet_18()
     lst = [list(row) for row in test_data.imgs]  # store wrong test datasets in training proccess
     train(net, train_iter, test_iter, num_epochs, lst, lr, utf.try_gpu(0))
     utf.save_wrong_set(lst, save=False)
