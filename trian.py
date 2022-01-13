@@ -1,3 +1,5 @@
+import cv2
+import numpy
 import torchvision.datasets
 import SEResnet
 import Resnet
@@ -12,7 +14,7 @@ from torch import nn
 
 
 def train(net, train_iter, test_iter, num_epochs, lst, lr, device):
-    """用GPU训练模型(在第六章定义)。"""
+    """用GPU训练模型。"""
 
     def init_weights(m):
         if type(m) == nn.Linear or type(m) == nn.Conv2d:
@@ -118,4 +120,48 @@ def train_my_net():
     utf.save_wrong_set(lst, save=False)
 
 
-train_my_net()
+def train_ObjectDtect_net():
+    # 加载数据集
+    # test_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\test_data_im'
+    # train_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\train_data_im'
+    # train_root = r'dataset_im1113/train_data_im'
+    # test_root = r'dataset_im1113/test_data_im'
+    # train_root = r'dataset211118_4_deleteSomeDefects/train_data'
+    # test_root = r'dataset211118_4_deleteSomeDefects/test_data'
+    # train_root = r'dataset211118_4/train_data'
+    # test_root = r'dataset211118_4/test_data'
+    # train_root = r'dataset211118_3/dataset211118_3_fdt/train_data'
+    # test_root = r'dataset211118_3/dataset211118_3_fdt/test_data'
+    train_root = r'dataset211213_4_128/train_data'
+    test_root = r'dataset211213_4_128/test_data'
+
+    transform = transforms.Compose([transforms.Resize((64, 128)),
+                                    # transforms.Grayscale(1),
+                                    transforms.ToTensor()])
+    train_data = ImageFolder(train_root, transform=transform)
+    test_data = ImageFolder(test_root, transform=transform)
+    batch_size = 64
+    train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
+    test_iter = data.DataLoader(test_data, batch_size)
+
+    # 训练
+    lr, num_epochs = 0.0005, 50
+    net = my_net.new_cbam_net()
+    # net = Resnet.resnet18()
+    # net = SEResnet.serenet18()
+    # net = CBAMResnet.CBAMResnet_18()
+    lst = [list(row) for row in test_data.imgs]  # store wrong test datasets in training proccess
+    train(net, train_iter, test_iter, num_epochs, lst, lr, utf.try_gpu(0))
+    utf.save_wrong_set(lst, save=False)
+
+
+# train_ObjectDtect_net()
+net = my_net.object_detect_new_cbam_net()
+img = cv2.imread('1.png')
+img = img[:, :, ::-1].transpose(2, 0, 1)
+img = numpy.ascontiguousarray(img)
+im = torch.from_numpy(img).float()
+im = im.unsqueeze_(0)
+y = net(im)
+print(y)
+

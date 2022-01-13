@@ -10,9 +10,9 @@ class Self_ChannelAttentionModule(nn.Module):
         self.max_pool = nn.AdaptiveMaxPool2d(1)
 
         self.shared_MLP = nn.Sequential(
-            nn.Conv2d(channel, (channel // ratio)*3, 1, bias=False, groups=3),
+            nn.Conv2d(channel, (channel // ratio) * 3, 1, bias=False, groups=3),
             nn.ReLU(),
-            nn.Conv2d((channel // ratio)*3, channel, 1, bias=False, groups=3)
+            nn.Conv2d((channel // ratio) * 3, channel, 1, bias=False, groups=3)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -25,12 +25,12 @@ class Self_ChannelAttentionModule(nn.Module):
 class Self_SpatialAttentionModule(nn.Module):
     def __init__(self):
         super(Self_SpatialAttentionModule, self).__init__()
-        self.conv2d_0 = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7,
-                                stride=1, padding=3)
-        self.conv2d_1 = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7,
-                                stride=1, padding=3)
-        self.conv2d_2 = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=7,
-                                stride=1, padding=3)
+        self.conv2d_0 = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=(3, 9),
+                                  stride=(1, 1), padding=(1, 4))
+        self.conv2d_1 = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=(3, 9),
+                                  stride=(1, 1), padding=(1, 4))
+        self.conv2d_2 = nn.Conv2d(in_channels=2, out_channels=1, kernel_size=(3, 9),
+                                  stride=(1, 1), padding=(1, 4))
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
@@ -55,6 +55,18 @@ class Self_SpatialAttentionModule(nn.Module):
         return x_list
 
 
+class Self_SpatialAttentionModule1(nn.Module):
+    def __init__(self, in_channels, kernel_size, padding):
+        super(Self_SpatialAttentionModule1, self).__init__()
+        self.conv2d_0 = nn.Conv2d(in_channels=in_channels, out_channels=3, kernel_size=kernel_size,
+                                  groups=3, stride=(1, 1), padding=padding)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        x *= self.conv2d_0(x)
+        return x
+
+
 class Self_CBAM(nn.Module):
     def __init__(self, channel):
         super(Self_CBAM, self).__init__()
@@ -74,9 +86,9 @@ class Cross_ChannelAttentionModule(nn.Module):
         self.max_pool = nn.AdaptiveMaxPool2d(1)
 
         self.shared_MLP = nn.Sequential(
-            nn.Conv2d(channel, (channel // ratio)*3, 1, bias=False),
+            nn.Conv2d(channel, (channel // ratio) * 3, 1, bias=False),
             nn.ReLU(),
-            nn.Conv2d((channel // ratio)*3, channel, 1, bias=False)
+            nn.Conv2d((channel // ratio) * 3, channel, 1, bias=False)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -90,7 +102,7 @@ class Cross_SpatialAttentionModule(nn.Module):
     def __init__(self):
         super(Cross_SpatialAttentionModule, self).__init__()
         self.conv2d = nn.Conv2d(in_channels=2, out_channels=1,
-                                kernel_size=7, stride=1, padding=3)
+                                kernel_size=(3, 9), stride=(1, 1), padding=(1, 4))
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
@@ -147,6 +159,54 @@ class Cross_CBAMResidual(nn.Module):
                                kernel_size=3, padding=1, stride=strides)
         self.conv2 = nn.Conv2d(num_channels, num_channels,
                                kernel_size=3, padding=1)
+        self.cbam = Cross_CBAM(num_channels)
+        self.bn1 = nn.BatchNorm2d(num_channels)
+        self.bn2 = nn.BatchNorm2d(num_channels)
+
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = self.bn2(self.conv2(Y))
+        Y = self.cbam(Y)
+        Y += X
+        return F.relu(Y)
+
+
+class Self_ObjectDetect_CBAMResidual(nn.Module):
+    def __init__(self, input_channels, num_channels, use_1x1conv=False,
+                 strides=(1, 1), padding=(1, 4), kernel_size=(3, 9)):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_channels, num_channels, groups=3,
+                               kernel_size=kernel_size, padding=padding, stride=strides)
+        self.conv2 = nn.Conv2d(num_channels, num_channels, groups=3,
+                               kernel_size=kernel_size, padding=padding)
+        self.cbamself = Self_CBAM(num_channels)
+        if use_1x1conv:
+            self.conv3 = nn.Conv2d(input_channels, num_channels, groups=3,
+                                   kernel_size=kernel_size, stride=strides, padding=padding)
+        else:
+            self.conv3 = None
+        self.bn1 = nn.BatchNorm2d(num_channels)
+        self.bn2 = nn.BatchNorm2d(num_channels)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = self.bn2(self.conv2(Y))
+        Y = self.cbamself(Y)
+        if self.conv3:
+            X = self.conv3(X)
+        Y += X
+        return F.relu(Y)
+
+
+class Cross_ObjectDetect_CBAMResidual(nn.Module):
+    def __init__(self, input_channels, num_channels,
+                 padding=(1, 4), kernel_size=(3, 9)):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_channels, num_channels,
+                               kernel_size=kernel_size, padding=padding)
+        self.conv2 = nn.Conv2d(num_channels, num_channels,
+                               kernel_size=kernel_size, padding=padding)
         self.cbam = Cross_CBAM(num_channels)
         self.bn1 = nn.BatchNorm2d(num_channels)
         self.bn2 = nn.BatchNorm2d(num_channels)
