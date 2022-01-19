@@ -222,3 +222,6 @@ def save_wrong_set(lst, save=True):
             elements = element.split('/')
             new_name = '/home/gsw/Desktop/test_wrong_set/' + elements[-2] + '_' + str(indx) + '_' + elements[-1]
             shutil.copy(element, new_name)
+
+
+
