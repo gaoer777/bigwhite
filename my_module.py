@@ -217,3 +217,65 @@ class Cross_ObjectDetect_CBAMResidual(nn.Module):
         Y = self.cbam(Y)
         Y += X
         return F.relu(Y)
+
+
+class Out_Layer(nn.Module):
+    """
+    对输出进行处理
+    """
+    def __init__(self, anchors, stride_x, stride_y):
+        super(Out_Layer, self).__init__()
+        self.anchors = torch.Tensor(anchors)
+        self.stride_x = stride_x  # layer stride 特征图上一步对应原图上的步距 [32, 16, 8]
+        self.stride_y = stride_y
+        self.na = len(anchors)  # number of anchors (3)
+        self.no = 5  # number of outputs (5: x, y, w, h, obj,)
+        self.nx, self.ny, self.ng = 0, 0, (0, 0)  # initialize number of x, y gridpoints
+        # 将anchors大小缩放到grid尺度
+        self.anchors[:, 0] /= self.stride_x
+        self.anchors[:, 1] /= self.stride_y
+        # batch_size, na, grid_h, grid_w, wh,
+        # 值为1的维度对应的值不是固定值，后续操作可根据broadcast广播机制自动扩充
+        self.anchor_wh = self.anchors.view(1, self.na, 1, 1, 2)
+        self.grid = None
+
+    def create_grids(self, ng=(16, 8), device="cpu"):
+        """
+        更新grids信息并生成新的grids参数
+        :param ng: 特征图大小
+        :param device:
+        :return:
+        """
+        self.nx, self.ny = ng
+        self.ng = torch.tensor(ng, dtype=torch.float)
+
+        # build xy offsets 构建每个cell处的anchor的xy偏移量(在feature map上的)
+        if not self.training:  # 训练模式不需要回归到最终预测boxes
+            yv, xv = torch.meshgrid([torch.arange(self.ny, device=device),
+                                     torch.arange(self.nx, device=device)])
+            # batch_size, na, grid_h, grid_w, wh
+            self.grid = torch.stack((xv, yv), 2).view((1, 1, self.ny, self.nx, 2)).float()
+
+    def forward(self, p):
+
+        bs, _, ny, nx = p.shape  # batch_size, predict_param(255), grid(13), grid(13)
+        if (self.nx, self.ny) != (nx, ny) or self.grid is None:  # fix no grid bug
+            self.create_grids((nx, ny), p.device)
+
+        # view: (batch_size, 255, 13, 13) -> (batch_size, 3, 85, 13, 13)
+        # permute: (batch_size, 3, 85, 13, 13) -> (batch_size, 3, 13, 13, 85)
+        # [bs, anchor, grid, grid, xywh + obj + classes]
+        p = p.view(bs, self.na, self.no, self.ny, self.nx).permute(0, 1, 3, 4, 2).contiguous()  # prediction
+
+        if self.training:
+            return p
+        else:  # inference，如果是测试的话
+            # [bs, anchor, grid, grid, xywh + obj + classes]
+            io = p.clone()  # inference output
+            self.anchor_wh = self.anchor_wh.to(p.device)
+            io[..., :2] = torch.sigmoid(io[..., :2]) + self.grid  # xy 计算在feature map上的xy坐标
+            io[..., 2:4] = torch.exp(io[..., 2:4]) * self.anchor_wh  # wh yolo method 计算在feature map上的wh
+            io[..., [0, 2]] *= self.stride_x  # 换算映射回原图尺度
+            io[..., [1, 3]] *= self.stride_y  # 换算映射回原图尺度
+            torch.sigmoid_(io[..., 4:])
+            return io.view(bs, -1, self.no), p  # view [1, 3, 13, 13, 85] as [1, 128, 15]

@@ -5,6 +5,7 @@ import SEResnet
 import Resnet
 import CBAMResnet
 import UtilFunctions as utf
+import datasets
 import my_net
 import torch
 from torch.utils import data
@@ -122,46 +123,51 @@ def train_my_net():
 
 def train_ObjectDtect_net():
     # 加载数据集
-    # test_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\test_data_im'
-    # train_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\train_data_im'
-    # train_root = r'dataset_im1113/train_data_im'
-    # test_root = r'dataset_im1113/test_data_im'
-    # train_root = r'dataset211118_4_deleteSomeDefects/train_data'
-    # test_root = r'dataset211118_4_deleteSomeDefects/test_data'
-    # train_root = r'dataset211118_4/train_data'
-    # test_root = r'dataset211118_4/test_data'
-    # train_root = r'dataset211118_3/dataset211118_3_fdt/train_data'
-    # test_root = r'dataset211118_3/dataset211118_3_fdt/test_data'
-    train_root = r'dataset211213_4_128/train_data'
-    test_root = r'dataset211213_4_128/test_data'
+    train_root = r'dataset0118/images'
+    transform = transforms.Compose([transforms.ToTensor()])
 
-    transform = transforms.Compose([transforms.Resize((64, 128)),
-                                    # transforms.Grayscale(1),
-                                    transforms.ToTensor()])
-    train_data = ImageFolder(train_root, transform=transform)
-    test_data = ImageFolder(test_root, transform=transform)
-    batch_size = 64
-    train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
-    test_iter = data.DataLoader(test_data, batch_size)
+    train_data = datasets.LoadImagesAndLabels(train_root, transform=transform)
+    batch_size = 24
+    train_iter = data.DataLoader(train_data, batch_size)
+    # test_iter = data.DataLoader(test_data, batch_size)
 
     # 训练
-    lr, num_epochs = 0.0005, 50
-    net = my_net.new_cbam_net()
-    # net = Resnet.resnet18()
-    # net = SEResnet.serenet18()
-    # net = CBAMResnet.CBAMResnet_18()
-    lst = [list(row) for row in test_data.imgs]  # store wrong test datasets in training proccess
-    train(net, train_iter, test_iter, num_epochs, lst, lr, utf.try_gpu(0))
-    utf.save_wrong_set(lst, save=False)
+    lr, num_epochs = 0.00001, 500
+    device = utf.try_gpu(0)
+    # device = torch.device('cpu')
+    net = my_net.object_detect_new_cbam_net()
+
+    def init_weights(m):
+        if type(m) == nn.Linear or type(m) == nn.Conv2d:
+            nn.init.xavier_uniform_(m.weight)
+
+    net.apply(init_weights)
+    print('training on', device)
+    net.to(device)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+
+    for epoch in range(num_epochs):
+        # 训练损失之和，训练准确率之和，范例数
+        net.train()
+        for i, (x, y) in enumerate(train_iter):
+            optimizer.zero_grad()
+            X = x.to(device)
+            result = net(X)
+            target = utf.get_targets(y)
+            loss = utf.compute_loss(result, targets=target)
+            sum_loss = loss["box_loss"] + loss["obj_loss"]
+            sum_loss.backward()
+            optimizer.step()
+            temp1 = loss['box_loss'].data.cpu().numpy()
+            temp2 = loss['obj_loss'].data.cpu().numpy()
+            temp3 = sum_loss.data.cpu().numpy()
+            if i % 20 == 0:
+                print(f"epoch:{epoch}",
+                      f"    box loss:{temp1}",
+                      f"    obj loss:{temp2}",
+                      f"    sum loss:{temp3}")
+
+    torch.save(net, "object_detect.pth")
 
 
-# train_ObjectDtect_net()
-net = my_net.object_detect_new_cbam_net()
-img = cv2.imread('1.png')
-img = img[:, :, ::-1].transpose(2, 0, 1)
-img = numpy.ascontiguousarray(img)
-im = torch.from_numpy(img).float()
-im = im.unsqueeze_(0)
-y = net(im)
-print(y)
-
+train_ObjectDtect_net()
