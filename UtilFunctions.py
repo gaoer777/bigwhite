@@ -232,11 +232,11 @@ def save_wrong_set(lst, save=True):
             shutil.copy(element, new_name)
 
 
-def compute_loss(p, targets, l_box=5, l_obj=10):  # predictions, targets, weight of box loss/object loss
+def compute_loss(p, targets, anchors, l_box=5, l_obj=50):  # predictions, targets, weight of box loss/object loss
     device = p[0].device
     lbox = torch.zeros(1, device=device)  # Tensor(0) 预测的box的损失
     lobj = torch.zeros(1, device=device)  # Tensor(0) 预测的目标损失
-    tcls, tbox, indices, anchors = build_targets(p, targets)  # targets
+    tcls, tbox, indices, anchors = build_targets(p, targets, anchors)  # targets
     anchors_vec = anchors[0] / torch.Tensor([[32, 8]])  # 转换为相对尺寸
     anchors_vec = anchors_vec.to(device)
     tbox = tbox[0].to(device)
@@ -281,14 +281,14 @@ def compute_loss(p, targets, l_box=5, l_obj=10):  # predictions, targets, weight
             "obj_loss": lobj}
 
 
-def build_targets(p, targets):
+def build_targets(p, targets, anchors, iou_t=0.30):
     # Build targets for compute_loss(), input targets(image_idx,class,x,y,w,h)
     nt = targets.shape[0]
     tcls, tbox, indices, anch = [], [], [], []
     gain = torch.ones(6, device=targets.device)  # normalized to gridspace gain
 
     # 注意anchor_vec是anchors缩放到对应特征层上的尺度
-    anchors = torch.Tensor([[200, 60], [50, 15], [100, 40]])
+    anchors = torch.Tensor(anchors)
     # p[i].shape: [batch_size, 3, grid_h, grid_w, num_params]
     gain[2:] = torch.tensor(p.shape)[[3, 2, 3, 2]]  # xyxy gain
     na = 3  # number of anchors
@@ -300,7 +300,7 @@ def build_targets(p, targets):
     if nt:  # 如果存在target的话
         # 通过计算anchor模板与所有target的wh_iou来匹配正样本
         # j: [3, nt] , iou_t = 0.20 , 计算的是每个anchor（3个）和每个target框（groundtruth框）的粗略的iou
-        j = wh_iou(anchors, t[:, 4:6]) > 0.2  # iou(3,n) = wh_iou(anchors(3,2), gwh(n,2))
+        j = wh_iou(anchors, t[:, 4:6]) > iou_t  # iou(3,n) = wh_iou(anchors(3,2), gwh(n,2))
         # t.repeat(na, 1, 1): [nt, 6] -> [3, nt, 6]
         # 获取正样本对应的anchor模板与target信息
         a, t = at[j], t.repeat(na, 1, 1)[j]  # filter
@@ -437,11 +437,10 @@ def get_targets(labels):
     return torch.from_numpy(targets)
 
 
-def non_max_suppression(prediction, conf_thres=0.1, iou_thres=0.6,
+def non_max_suppression(prediction, conf_thres=0.7, iou_thres=0.6,
                         multi_label=True, classes=None, agnostic=False, max_num=10):
     """
     Performs  Non-Maximum Suppression on inference results
-
     param: prediction[batch, num_anchors, (num_classes+1+4) x num_anchors]
     Returns detections with shape:
         nx6 (x1, y1, x2, y2, conf, cls)

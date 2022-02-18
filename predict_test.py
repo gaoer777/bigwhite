@@ -16,7 +16,6 @@ def main():
 
     model = torch.load("object_detect.pth")
     model.to(device)
-
     model.eval()
     with torch.no_grad():
         # init 创建一张图片初始化模型
@@ -39,7 +38,7 @@ def main():
 
         # 对预测结果进行过滤，采用非极大值抑制的方法
         # conf_thres滤除一部分低于这个阈值的目标框，代表是否为目标的置信度
-        pred = utf.non_max_suppression(pred, conf_thres=0.8,
+        pred = utf.non_max_suppression(pred, conf_thres=0.5, max_num=10,
                                        iou_thres=0.6, multi_label=True)[0]
 
         if pred is None:
@@ -58,7 +57,8 @@ def main():
         plt.imshow(img_o)
         plt.show()
 
-        img_o.save("164_d.png")
+        img_o.save(img_path.split('.')[0] + "_d" + ".png")
+        # img_o.save("164_d.png")
 
 
 if __name__ == "__main__":

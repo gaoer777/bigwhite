@@ -124,18 +124,22 @@ def train_my_net():
 def train_ObjectDtect_net():
     # 加载数据集
     train_root = r'dataset0118/images'
-    transform = transforms.Compose([transforms.ToTensor()])
+    # anchors = [[200, 60], [50, 15], [100, 40]]
+    anchors = [[60, 50], [15, 25], [30, 30]]
+    lr, num_epochs = 0.0001, 100
+    batch_size = 10
+    l_box = 3  # 框损失的权重系数
+    l_obj = 50  # 目标损失的权重系数
 
+    device = utf.try_gpu(0)
+    # device = torch.device('cpu')
+    transform = transforms.Compose([transforms.ToTensor()])
     train_data = datasets.LoadImagesAndLabels(train_root, transform=transform)
-    batch_size = 24
     train_iter = data.DataLoader(train_data, batch_size)
     # test_iter = data.DataLoader(test_data, batch_size)
 
     # 训练
-    lr, num_epochs = 0.00001, 500
-    device = utf.try_gpu(0)
-    # device = torch.device('cpu')
-    net = my_net.object_detect_new_cbam_net()
+    net = my_net.object_detect_new_cbam_net(anchors=anchors)
 
     def init_weights(m):
         if type(m) == nn.Linear or type(m) == nn.Conv2d:
@@ -154,14 +158,14 @@ def train_ObjectDtect_net():
             X = x.to(device)
             result = net(X)
             target = utf.get_targets(y)
-            loss = utf.compute_loss(result, targets=target)
+            loss = utf.compute_loss(result, anchors=anchors, targets=target, l_box=l_box, l_obj=l_obj)
             sum_loss = loss["box_loss"] + loss["obj_loss"]
             sum_loss.backward()
             optimizer.step()
             temp1 = loss['box_loss'].data.cpu().numpy()
             temp2 = loss['obj_loss'].data.cpu().numpy()
             temp3 = sum_loss.data.cpu().numpy()
-            if i % 20 == 0:
+            if i % len(train_iter) == 0:
                 print(f"epoch:{epoch}",
                       f"    box loss:{temp1}",
                       f"    obj loss:{temp2}",

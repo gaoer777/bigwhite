@@ -1,6 +1,4 @@
-import numpy as np
-import torch
+import my_net
 
-a = torch.rand((5, 7))
-conf, j = a[:, 5:].max(1)
-print(a.numpy())
+net = my_net.new_cbam_net()
+print(net)

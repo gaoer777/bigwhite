@@ -50,7 +50,7 @@ def filter_low_thresh(boxes, scores, classes, category_index, thresh, box_to_dis
 
 def draw_text(draw, box_to_display_str_map, box, left, right, top, bottom, color):
     try:
-        font = ImageFont.truetype('arial.ttf', 20)
+        font = ImageFont.truetype('arial.ttf', 10)
     except IOError:
         font = ImageFont.load_default()
 
