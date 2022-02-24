@@ -27,7 +27,7 @@ def train(net, train_iter, test_iter, num_epochs, lst, lr, device):
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     loss = nn.CrossEntropyLoss()
     animator = utf.Animator(xlabel='epoch', xlim=[1, num_epochs], ylim=[0, 1.2],
-                        legend=['train loss', 'train acc', 'test acc'])
+                            legend=['train loss', 'train acc', 'test acc'])
     timer, num_batches = utf.Timer(), len(train_iter)
     for epoch in range(num_epochs):
         # 训练损失之和，训练准确率之和，范例数

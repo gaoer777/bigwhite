@@ -2,7 +2,6 @@ import math
 import os
 import shutil
 import time
-
 import cv2
 import numpy
 import torch
@@ -10,6 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torchvision
 from torch import nn
+from torch.utils.tensorboard import SummaryWriter
 
 
 class Timer:  # @save
@@ -609,3 +609,38 @@ def letterbox(img: np.ndarray,
 
     img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
     return img, ratio, (dw, dh)
+
+
+def train(net, train_iter, test_iter, num_epochs, lr, writer, tag, device):
+    """用GPU训练模型。"""
+
+    print('training on', device)
+    net.to(device)
+    optimizer = torch.optim.Adam(net.parameters(), lr=lr)
+    loss = nn.CrossEntropyLoss()
+    train_l, train_acc, num_batches = 0., 0., len(train_iter)
+    for epoch in range(num_epochs):
+        # 训练损失之和，训练准确率之和，范例数
+        metric = Accumulator(3)
+        net.train()
+        for i, (X, y) in enumerate(train_iter):
+            optimizer.zero_grad()
+            X, y = X.to(device), y.to(device)
+            y_hat = net(X)
+            l = loss(y_hat, y)
+            l.backward()
+            optimizer.step()
+            with torch.no_grad():
+                metric.add(l * X.shape[0], accuracy(y_hat, y), X.shape[0])
+            train_l = metric[0] / metric[2]
+            train_acc = metric[1] / metric[2]
+            if (i + 1) % ((num_batches // 5)+1) == 0 or i == num_batches - 1:
+                writer.add_scalar(f'{tag}/train_loss', train_l, global_step=epoch + (i + 1) / num_batches)
+                writer.add_scalar(f'{tag}/train_acc', train_acc, global_step=epoch + (i + 1) / num_batches)
+
+        test_acc = evaluate_accuracy_gpu(net, test_iter)
+        writer.add_scalar(f'{tag}/test_acc', test_acc, global_step=epoch)
+        if epoch % 2 == 0:
+            print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, '
+                  f'test acc {test_acc:.3f},'
+                  f'processed {epoch * 100 / num_epochs:.2f}%')
