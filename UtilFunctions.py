@@ -145,7 +145,7 @@ def evaluate_accuracy_gpu(net, data_iter, device=None):  # @save
         else:
             X = X.to(device)
         y = y.to(device)
-        metric.add(accuracy(net(X), y), y.numel())
+        metric.add(accuracy(net.forward_once(X), y), y.numel())
     return metric[0] / metric[1]
 
 
@@ -626,7 +626,7 @@ def train(net, train_iter, test_iter, num_epochs, lr, writer, tag, device):
         for i, (X, y) in enumerate(train_iter):
             optimizer.zero_grad()
             X, y = X.to(device), y.to(device)
-            y_hat = net(X)
+            y_hat = net.forward_once(X)
             l = loss(y_hat, y)
             l.backward()
             optimizer.step()

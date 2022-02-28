@@ -1,5 +1,4 @@
 import torchvision.models
-
 import UtilFunctions as utf
 import torch
 import my_net

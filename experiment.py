@@ -1,3 +1,4 @@
+import torch
 import my_net
 import UtilFunctions as utf
 from torch.utils import data
@@ -5,6 +6,7 @@ from torchvision import models
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from torch.utils.tensorboard import SummaryWriter
+from ContrastiveLearning import ContrastiveNetwork
 
 
 def experiment1():
@@ -28,12 +30,15 @@ def experiment1():
     test_iter = data.DataLoader(test_data, 32)
 
     # 网络加载
-    # net1 = models.resnet18(pretrained=False, num_classes=2)
-    # net2 = models.densenet121(pretrained=False, num_classes=2)
+    net1 = models.resnet18(pretrained=False, num_classes=2)
+    net2 = models.densenet121(pretrained=False, num_classes=2)
     net3 = my_net.new_cbam_net()
+    net = [net1, net2, net3]
+    tag = ['resnet18', 'densenet121', 'my_net']
 
     writer = SummaryWriter('run_log/experiment1')
-    utf.train(net3, train_iter, test_iter, 50, 0.00001, writer, 'my_net', utf.try_gpu(0))
+    for i in range(len(net)):
+        utf.train(net[i], train_iter, test_iter, 50, 0.00001, writer, tag[i], utf.try_gpu(0))
 
 
 def experiment2():
@@ -53,12 +58,15 @@ def experiment2():
     test_iter = data.DataLoader(test_data, 32)
 
     # 网络加载
-    # net1 = models.resnet18(pretrained=False, num_classes=2)
+    net1 = models.resnet18(pretrained=False, num_classes=2)
     net2 = models.densenet121(pretrained=False, num_classes=2)
-    # net3 = my_net.new_cbam_net()
+    net3 = my_net.new_cbam_net()
+    net = [net1, net2, net3]
+    tag = ['resnet18', 'densenet121', 'my_net']
 
     writer = SummaryWriter('run_log/experiment2')
-    utf.train(net2, train_iter, test_iter, 50, 0.00005, writer, 'densenet121', utf.try_gpu(0))
+    for i in range(len(tag)):
+        utf.train(net[i], train_iter, test_iter, 50, 0.00005, writer, tag[i], utf.try_gpu(0))
 
 
 def experiment3():
@@ -79,13 +87,16 @@ def experiment3():
     test_iter = data.DataLoader(test_data, 32)
 
     # 网络加载
-    # net1 = models.resnet18(pretrained=False, num_classes=2)
-    net2 = models.densenet121(pretrained=False, num_classes=2)
-    # net3 = my_net.new_cbam_net()
+    net1 = torch.load('resnet18-epoch-30.pth')
+    net2 = torch.load('densenet121-epoch-30.pth')
+    net3 = torch.load('my_net-epoch-30.pth')
+    net = [net1, net2, net3]
+    tag = ['resnet18', 'densenet121', 'my_net']
 
     writer = SummaryWriter('run_log/experiment3')
-    utf.train(net2, train_iter, test_iter, 50, 0.00001, writer, 'densenet121', utf.try_gpu(0))
+    for i in range(len(tag)):
+        utf.train(net[i], train_iter, test_iter, 50, 0.00001, writer, tag[i], utf.try_gpu(0))
 
 
 if __name__ == '__main__':
-    experiment2()
+    experiment3()

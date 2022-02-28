@@ -1,7 +1,10 @@
 import numpy as np
 import os
 import cv2
+from torchvision import models, transforms
 from torch.autograd import Variable
+from torch.utils.tensorboard import SummaryWriter
+import UtilFunctions as utf
 import torch
 from torch.utils import data
 import torch.nn as nn
@@ -12,9 +15,9 @@ class ContrastiveNetwork(nn.Module):
     """
     使用对比学习训练的方式提升网络效果
     """
-    def __init__(self):
+    def __init__(self, model):
         super(ContrastiveNetwork, self).__init__()
-        self.cnn0 = my_net.train_siamese_net()
+        self.cnn0 = model
         self.enginlayer = nn.Linear(504, 504, bias=False)
         self.sigmoid = torch.sigmoid
 
@@ -64,11 +67,11 @@ def create_pairs(data, digit_indices):
             z1, z2 = digit_indices[d][i], digit_indices[d][i + 1]  # 匹配正样本（相同标签）
             x0_data.append(data[z1] / 255.)  # 图像归一化
             x1_data.append(data[z2] / 255.)
-            label.append(0)  # 相同样本对标签置为0
+            label.append(1)  # 相同样本对标签置为1
             z1, z2 = digit_indices[d][i], digit_indices[dn][i]  # 匹配负样本（不同标签）
             x0_data.append(data[z1] / 255.)
             x1_data.append(data[z2] / 255.)
-            label.append(1)  # 不相同样本对的标签置为1
+            label.append(0)  # 不相同样本对的标签置为0
 
     x0_data = np.array(x0_data, dtype=np.float32)  # 转换数据类型
     x0_data = x0_data.reshape([-1, 3, 64, 64])  # (h,w,c)-->(c,h,w)
@@ -121,35 +124,29 @@ def extract_features(path):
     return X, y
 
 
-def main():
-    # 加载数据集
-    X_train, y_train = extract_features("dataset/Dataset211118/dataset/dataset211118_4/train_data")
-    X_test, y_test = extract_features("dataset/Dataset211118/dataset/dataset211118_4/test_data")
-    print(X_train.shape, y_train.shape)
-    batchsize = 64
-    train_iter = create_iterator(X_train, y_train, batchsize)
-    train_loader = torch.utils.data.DataLoader(train_iter, batch_size=batchsize, shuffle=True)
-
-    # 调用模型
-    model = ContrastiveNetwork()
-    model.to(torch.device(0))
+def train_contrast_model(model, train_loader, writer, tag, batch_size=64,
+                         device='cpu', learning_rate=0.0001, epochs=30):
+    # 加载模型
+    model = ContrastiveNetwork(model)
+    model.to(device)
 
     # 设置优化器
-    learning_rate = 0.0001  # learning rate for optimization
-    momentum = 0.9  # momentum
-    # optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, verbose=True)
+    learning_rate = learning_rate  # learning rate for optimization
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    # momentum = 0.9  # momentum
+    # optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
+    # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, verbose=True)
 
     # 设置损失函数
     criterion = contrastive_loss_function
     train_loss = []
-    epochs = 50
+    epochs = epochs
     for epoch in range(epochs):
         total_loss = 0.0
         for batch_idx, (x0, x1, labels) in enumerate(train_loader):
             labels = labels.float().to(torch.device(0))
-            x0, x1, labels = Variable(x0).to(torch.device(0)), Variable(x1).to(torch.device(0)), Variable(labels).to(
+            x0, x1, labels = Variable(x0).to(torch.device(0)), \
+                             Variable(x1).to(torch.device(0)), Variable(labels).to(
                 torch.device(0))
             output1, output2 = model.forward(x0, x1)
             loss = criterion(output1, output2, labels)
@@ -158,11 +155,30 @@ def main():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        scheduler.step(epoch)
-        print('Epoch: {} \tLoss: {:.6f}'.format(epoch, total_loss * 1.0 / batchsize))
-    # if epoch % 10 == 0:
-    torch.save(model, './SiameseModified-epoch-%s.pth' % epochs)
+        # scheduler.step(epoch)
+        print('Epoch: {} \tLoss: {:.6f}'.format(epoch, total_loss * 1.0 / batch_size))
+        writer.add_scalar(f'{tag}/train_loss', total_loss, epoch)
+
+    torch.save(model, f'./{tag}-epoch-%s.pth' % epochs)
 
 
 if __name__ == '__main__':
-    main()
+    # 加载数据集
+    X_train, y_train = extract_features("dataset/Dataset211118/dataset/dataset211118_4/train_data")
+    batch_size = 64
+    transform = transforms.Compose([transforms.Resize((64, 64)),
+                                    # transforms.Grayscale(1),
+                                    transforms.ToTensor()])
+    train_iter = create_iterator(X_train, y_train, batch_size)
+    train_loader = data.DataLoader(train_iter, batch_size=batch_size, shuffle=True)
+
+    net1 = models.resnet18(pretrained=False, num_classes=504)
+    net2 = models.densenet121(pretrained=False, num_classes=504)
+    net3 = my_net.train_siamese_net()
+    net = [net1, net2, net3]
+    tag = ['resnet18', 'densenet121', 'my_net']
+    writer = SummaryWriter('./run_log/train_contrast_model')
+
+    for i in range(2, 3):
+        train_contrast_model(net[i], train_loader, writer, tag[i],
+                             device=utf.try_gpu(0), learning_rate=0.0001)
