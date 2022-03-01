@@ -32,7 +32,7 @@ def experiment1():
     # 网络加载
     net1 = models.resnet18(pretrained=False, num_classes=2)
     net2 = models.densenet121(pretrained=False, num_classes=2)
-    net3 = my_net.new_cbam_net()
+    net3 = my_net.new_cbam_net(kernel_size=3, padding=1)
     net = [net1, net2, net3]
     tag = ['resnet18', 'densenet121', 'my_net']
 
@@ -60,7 +60,7 @@ def experiment2():
     # 网络加载
     net1 = models.resnet18(pretrained=False, num_classes=2)
     net2 = models.densenet121(pretrained=False, num_classes=2)
-    net3 = my_net.new_cbam_net()
+    net3 = my_net.new_cbam_net(kernel_size=3, padding=1)
     net = [net1, net2, net3]
     tag = ['resnet18', 'densenet121', 'my_net']
 
