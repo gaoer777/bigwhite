@@ -126,6 +126,7 @@ def extract_features(path):
 
 def train_contrast_model(model, train_loader, writer, tag, batch_size=64,
                          device='cpu', learning_rate=0.0001, epochs=30):
+    """训练对比模型并保存，模型的输出为504维的特征提取网络"""
     # 加载模型
     model = ContrastiveNetwork(model)
     model.to(device)
@@ -174,11 +175,11 @@ if __name__ == '__main__':
 
     net1 = models.resnet18(pretrained=False, num_classes=504)
     net2 = models.densenet121(pretrained=False, num_classes=504)
-    net3 = my_net.train_siamese_net()
+    net3 = my_net.train_siamese_net(kernel_size=3, padding=1)
     net = [net1, net2, net3]
     tag = ['resnet18', 'densenet121', 'my_net']
     writer = SummaryWriter('./run_log/train_contrast_model')
 
-    for i in range(2, 3):
+    for i in range(3):
         train_contrast_model(net[i], train_loader, writer, tag[i],
                              device=utf.try_gpu(0), learning_rate=0.0001)

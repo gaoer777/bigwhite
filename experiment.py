@@ -6,7 +6,7 @@ from torchvision import models
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from torch.utils.tensorboard import SummaryWriter
-from ContrastiveLearning import ContrastiveNetwork
+from retrain import ContrasNetClassify
 
 
 def experiment1():
@@ -87,9 +87,9 @@ def experiment3():
     test_iter = data.DataLoader(test_data, 32)
 
     # 网络加载
-    net1 = torch.load('resnet18-epoch-30.pth')
-    net2 = torch.load('densenet121-epoch-30.pth')
-    net3 = torch.load('my_net-epoch-30.pth')
+    net1 = torch.load('resnet18-retrained.pth')
+    net2 = torch.load('densenet121-retrained.pth')
+    net3 = torch.load('my_net-retrained.pth')
     net = [net1, net2, net3]
     tag = ['resnet18', 'densenet121', 'my_net']
 

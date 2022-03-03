@@ -101,6 +101,16 @@ class Animator:  # @save
 
 
 # 定义计算准确性、敏感性
+def evaluate(y_hat, y):
+    if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
+        y_hat = y_hat.argmax(axis=1)
+    tp = y_hat[(y_hat == 0) & (y == 0)]
+    fp = y_hat[(y_hat == 0) & (y == 1)]
+    tn = y_hat[(y_hat == 1) & (y == 1)]
+    fn = y_hat[(y_hat == 1) & (y == 0)]
+    return tp.numel(), fp.numel(), tn.numel(), fn.numel()
+
+
 def accuracy(y_hat, y):
     if len(y_hat.shape) > 1 and y_hat.shape[1] > 1:
         y_hat = y_hat.argmax(axis=1)
@@ -192,6 +202,30 @@ def evaluate_false_positive_gpu(net, data_iter, device=None):  # @save
         metric.add(false_positive(y_hat, y), y_temp[y_temp == 0].numel())
 
     return metric[0] / (metric[1]+0.0001)
+
+
+def evaluations(net, data_iter, device=None):  # @save
+    """使用GPU计算模型在数据集上的混淆矩阵，返回tp, fp, tn, fn, y.numel()。"""
+    if isinstance(net, torch.nn.Module):
+        net.eval()  # 设置为评估模式
+        if not device:
+            device = next(iter(net.parameters())).device
+    # 正确预测的数量，总预测的数量
+    metric = Accumulator(5)
+    for i, (X, y) in enumerate(data_iter):
+        if isinstance(X, list):
+            X = [x.to(device) for x in X]
+        else:
+            X = X.to(device)
+        y = y.to(device)
+        y_hat = net(X)
+        y_temp = y_hat.argmax(axis=1)
+        tp = y_temp[(y_temp == 0) & (y == 0)]
+        fp = y_temp[(y_temp == 0) & (y == 1)]
+        tn = y_temp[(y_temp == 1) & (y == 1)]
+        fn = y_temp[(y_temp == 1) & (y == 0)]
+        metric.add(tp.numel(), fp.numel(), tn.numel(), fn.numel(), y.numel())
+    return metric
 
 
 # 设置训练设备
@@ -626,7 +660,7 @@ def train(net, train_iter, test_iter, num_epochs, lr, writer, tag, device):
         for i, (X, y) in enumerate(train_iter):
             optimizer.zero_grad()
             X, y = X.to(device), y.to(device)
-            y_hat = net.forward_once(X)
+            y_hat = net(X)
             l = loss(y_hat, y)
             l.backward()
             optimizer.step()
@@ -637,10 +671,14 @@ def train(net, train_iter, test_iter, num_epochs, lr, writer, tag, device):
             if (i + 1) % ((num_batches // 5)+1) == 0 or i == num_batches - 1:
                 writer.add_scalar(f'{tag}/train_loss', train_l, global_step=epoch + (i + 1) / num_batches)
                 writer.add_scalar(f'{tag}/train_acc', train_acc, global_step=epoch + (i + 1) / num_batches)
-
-        test_acc = evaluate_accuracy_gpu(net, test_iter)
+        # 评价指标
+        indexes = evaluations(net, test_iter)
+        test_acc = (indexes[0] + indexes[2])/indexes[4]
+        FPR = indexes[0]/(indexes[0] + indexes[3])
         writer.add_scalar(f'{tag}/test_acc', test_acc, global_step=epoch)
+        writer.add_scalar(f'{tag}/FPR', FPR, global_step=epoch)
         if epoch % 2 == 0:
             print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, '
-                  f'test acc {test_acc:.3f},'
+                  f'test acc {test_acc*100:.4f}%,'
+                  f'FPR {FPR*100:.4f}%,'
                   f'processed {epoch * 100 / num_epochs:.2f}%')
