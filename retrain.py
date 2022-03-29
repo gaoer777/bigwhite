@@ -24,7 +24,7 @@ class ContrasNetClassify(nn.Module):
 
 
 def train_step1(net, train_it, test_it, epochs, lr, device):
-    # 只训练分类器部分
+    """只训练分类器部分"""
     for k in net.backbone.parameters():
         k.requires_grad = False
 

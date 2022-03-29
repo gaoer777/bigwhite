@@ -251,6 +251,7 @@ def set_axes(axes, xlabel, ylabel, xlim, ylim, xscale, yscale, legend):
 
 
 def save_wrong_set(lst, save=True):
+    """统计训练时出现错误的数据集"""
     if save:
         a = 0
         for i in range(0, len(lst)):
@@ -674,7 +675,7 @@ def train(net, train_iter, test_iter, num_epochs, lr, writer, tag, device):
         # 评价指标
         indexes = evaluations(net, test_iter)
         test_acc = (indexes[0] + indexes[2])/indexes[4]
-        FPR = indexes[0]/(indexes[0] + indexes[3])
+        FPR = indexes[3]/(indexes[0] + indexes[3])
         writer.add_scalar(f'{tag}/test_acc', test_acc, global_step=epoch)
         writer.add_scalar(f'{tag}/FPR', FPR, global_step=epoch)
         if epoch % 2 == 0:
@@ -682,3 +683,43 @@ def train(net, train_iter, test_iter, num_epochs, lr, writer, tag, device):
                   f'test acc {test_acc*100:.4f}%,'
                   f'FPR {FPR*100:.4f}%,'
                   f'processed {epoch * 100 / num_epochs:.2f}%')
+
+
+def test_based_on_vote(net, test_iter):
+    """基于投票机制的模型测试"""
+    for i, (X, Y) in enumerate(test_iter):
+        X = X.cuda()
+        Y = Y.cuda()
+        y0 = net[0](X)
+        y_predicted0 = y0.argmax(axis=1)
+        y1 = net[1](X)
+        y_predicted1 = y1.argmax(axis=1)
+        y2 = net[2](X)
+        y_predicted2 = y2.argmax(axis=1)
+        y_pred = y_predicted0 + y_predicted1 + y_predicted2
+        y_pred[y_pred == 1] = 0
+        y_pred[y_pred == 2] = 1
+        tp = y_pred[(y_pred == 0) & (Y == 0)].numel()
+        fp = y_pred[(y_pred == 0) & (Y == 1)].numel()
+        tn = y_pred[(y_pred == 1) & (Y == 1)].numel()
+        fn = y_pred[(y_pred == 1) & (Y == 0)].numel()
+        acc = (tp + tn) / (tp + tn + fp + fn)
+        fpr = fn / (tp + fn)
+        net0_acc = y_predicted0[y_predicted0 == Y].numel() / Y.numel()
+        net1_acc = y_predicted1[y_predicted1 == Y].numel() / Y.numel()
+        net2_acc = y_predicted2[y_predicted2 == Y].numel() / Y.numel()
+        print(f'acc: {acc*100:.2f}%,  '
+              f'fpr: {fpr*100:.2f}%   '
+              f'acc: {net0_acc*100:.2f}%,  '
+              f'acc: {net1_acc*100:.2f}%,  '
+              f'acc: {net2_acc*100:.2f}%,  ')
+
+
+def test_model(net, test_iter):
+    """测试模型的准确率及FPR"""
+    indexes = evaluations(net, test_iter)
+    test_acc = (indexes[0] + indexes[2]) / indexes[4]
+    FPR = indexes[3] / (indexes[0] + indexes[3])
+    print(f'acc: {test_acc*100:.2f}%,  '
+          f'fpr: {FPR*100:.2f}% ')
+

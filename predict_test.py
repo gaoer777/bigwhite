@@ -9,12 +9,12 @@ from draw_box_utils import draw_box
 
 
 def main():
-    img_path = "164.png"
+    img_path = "362.png"
     category_index = {1: "defect"}
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    model = torch.load("object_detect.pth")
+    model = torch.load("./models/object_detect.pth")
     model.to(device)
     model.eval()
     with torch.no_grad():
@@ -38,7 +38,7 @@ def main():
 
         # 对预测结果进行过滤，采用非极大值抑制的方法
         # conf_thres滤除一部分低于这个阈值的目标框，代表是否为目标的置信度
-        pred = utf.non_max_suppression(pred, conf_thres=0.5, max_num=10,
+        pred = utf.non_max_suppression(pred, conf_thres=0.45, max_num=5,
                                        iou_thres=0.6, multi_label=True)[0]
 
         if pred is None:

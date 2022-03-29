@@ -123,7 +123,7 @@ def train_my_net():
 
 def train_ObjectDtect_net():
     # 加载数据集
-    train_root = r'dataset0118/images'
+    train_root = r'dataset/dataset0118/images'
     # anchors = [[200, 60], [50, 15], [100, 40]]
     anchors = [[60, 50], [15, 25], [30, 30]]
     lr, num_epochs = 0.0001, 100
@@ -139,7 +139,7 @@ def train_ObjectDtect_net():
     # test_iter = data.DataLoader(test_data, batch_size)
 
     # 训练
-    net = my_net.object_detect_new_cbam_net(anchors=anchors)
+    net = my_net.object_detect_new_cbam_net(anchors=anchors, kernel_size=3, padding=1)
 
     def init_weights(m):
         if type(m) == nn.Linear or type(m) == nn.Conv2d:

@@ -353,18 +353,13 @@ def train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, device):
             # torch.save(metric, 'ds_csv_metric18_adam')
             # torch.save(epoch, 'ds_csv_epoch18_adam')
         animator.add(epoch + 1, (None, None, test_acc))
+    torch.save(net, '3-22-mynet.pth')
     #animator.show()
 
 
 # 加载数据集
-# test_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\test_data_im'
-# train_root = 'E:\\BaiduNetdiskWorkspace\\workhard\\涡流数据\\Dataset211113\\dataset_im1113\\train_data_im'
-# train_root = r'dataset_im1113/train_data_im'
-# test_root = r'dataset_im1113/test_data_im'
-train_root = r'dataset211118_4_deleteSomeDefects/train_data'
-test_root = r'dataset211118_4_deleteSomeDefects/test_data'
-# train_root = r'dataset211118_3/dataset211118_3_fdt/train_data'
-# test_root = r'dataset211118_3/dataset211118_3_fdt/test_data'
+train_root = r'D:\gsw\Projects\WOLIU\bigwhite\dataset\Dataset220322\dataset\train_data'
+test_root = r'D:\gsw\Projects\WOLIU\bigwhite\dataset\Dataset220322\dataset\test_data'
 
 transform = transforms.Compose([transforms.Resize((64, 64)),
                                 #transforms.Grayscale(1),
@@ -375,19 +370,30 @@ batch_size = 32
 train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
 test_iter = data.DataLoader(test_data, len(test_data.imgs))
 
-# 训练
-lr, num_epochs = 0.0005, 50
-net = resnet_18()
-lst = [list(row) for row in test_data.imgs]#store wrong test datasets in training proccess
-train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, try_gpu(0))
-a = 0
-for i in range(0, len(lst)):
-    if lst[a][1] < 10:
-        del lst[a]
-    else:
-        a += 1
-for ele in lst:
-    element, indx = ele[0], ele[1]
-    elements = element.split('/')
-    new_name = '/home/gsw/Desktop/test_wrong_set_modified/'+elements[-2]+'_'+str(indx)+'_'+elements[-1]
-    shutil.copy(element, new_name)
+def train():
+    # 训练
+    lr, num_epochs = 0.0005, 50
+    net = resnet_18()
+    lst = [list(row) for row in test_data.imgs]  # store wrong test datasets in training proccess
+    train_ch6(net, train_iter, test_iter, num_epochs, lst, lr, try_gpu(0))
+    a = 0
+    for i in range(0, len(lst)):
+        if lst[a][1] < 10:
+            del lst[a]
+        else:
+            a += 1
+    for ele in lst:
+        element, indx = ele[0], ele[1]
+        elements = element.split('\\')
+        new_name = r'D:/gsw/Projects/WOLIU/bigwhite/dataset/Dataset220322/test_wrong_set_modified/'+elements[-2]+'_'+str(indx)+'_'+elements[-1]
+        shutil.copy(element, new_name)
+
+def test():
+    net = torch.load('3-22-mynet.pth')
+    net.cuda()
+    test_acc = evaluate_accuracy_gpu(net, test_iter)
+    print(test_acc)
+
+
+if __name__ == '__main__':
+    test()

@@ -179,7 +179,7 @@ class Self_ObjectDetect_CBAMResidual(nn.Module):
                                kernel_size=kernel_size, padding=padding, stride=strides)
         self.conv2 = nn.Conv2d(num_channels, num_channels, groups=3,
                                kernel_size=kernel_size, padding=padding)
-        self.cbamself = Self_CBAM(num_channels)
+        self.cbamself = Self_CBAM(num_channels, kernel_size=kernel_size, padding=padding)
         if use_1x1conv:
             self.conv3 = nn.Conv2d(input_channels, num_channels, groups=3,
                                    kernel_size=kernel_size, stride=strides, padding=padding)
@@ -207,7 +207,7 @@ class Cross_ObjectDetect_CBAMResidual(nn.Module):
                                kernel_size=kernel_size, padding=padding)
         self.conv2 = nn.Conv2d(num_channels, num_channels,
                                kernel_size=kernel_size, padding=padding)
-        self.cbam = Cross_CBAM(num_channels)
+        self.cbam = Cross_CBAM(num_channels, kernel_size=kernel_size, padding=padding)
         self.bn1 = nn.BatchNorm2d(num_channels)
         self.bn2 = nn.BatchNorm2d(num_channels)
 

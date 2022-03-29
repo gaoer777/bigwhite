@@ -71,10 +71,10 @@ def experiment2():
 
 def experiment3():
     """
-    实验2：
+    实验3：
     input：融合后的数据，FDA+FDT+FAT
-    network：浅层卷积网络<-->经典网络<-->自己设计的网络
-    增强技术：未增强<-->对比增强
+    network：经典网络<-->自己设计的网络
+    增强技术：对比增强
     """
 
     # 数据集加载
@@ -96,7 +96,56 @@ def experiment3():
     writer = SummaryWriter('run_log/experiment3')
     for i in range(len(tag)):
         utf.train(net[i], train_iter, test_iter, 50, 0.00001, writer, tag[i], utf.try_gpu(0))
+        torch.save(net[i], f'{tag[i]}-retrained.pth')
+
+
+def experiment4():
+    """
+    实验4：
+    input：融合后的数据，FDA+FDT+FAT
+    network：浅层卷积网络<-->经典网络<-->自己设计的网络
+    增强技术：使用投票机制进行判断
+    """
+
+    # 数据集加载
+    test_root = r'D:\gsw\Projects\WOLIU\bigwhite\dataset\Dataset220217\dataset_220217_rgb\test_data'
+    transform = transforms.Compose([transforms.Resize((64, 64)), transforms.ToTensor()])
+    test_data = ImageFolder(test_root, transform=transform)
+    test_iter = data.DataLoader(test_data, len(test_data))
+
+    # 网络加载
+    net1 = torch.load('resnet18-retrained.pth')
+    net2 = torch.load('densenet121-retrained.pth')
+    net3 = torch.load('my_net-retrained.pth')
+    net = [net1, net2, net3]
+
+    # utf.test_model(net1, test_iter)
+    utf.test_based_on_vote(net, test_iter)
+
+
+def experiment5():
+    """
+    实验4：
+    input：融合后的数据，FDA+FDT+FAT
+    network：浅层卷积网络<-->经典网络<-->自己设计的网络
+    增强技术：使用投票机制进行判断
+    """
+
+    # 数据集加载
+    train_root = r'D:\gsw\Projects\WOLIU\bigwhite\dataset\Dataset220217\dataset_220217_rgb\train_data'
+    transform = transforms.Compose([transforms.Resize((64, 64)), transforms.ToTensor()])
+    train_data = ImageFolder(train_root, transform=transform)
+    train_iter = data.DataLoader(train_data)
+
+    # 网络加载
+    net1 = torch.load('resnet18-retrained.pth')
+    net2 = torch.load('densenet121-retrained.pth')
+    net3 = torch.load('my_net-retrained.pth')
+    net = [net1, net2, net3]
+
+    # utf.test_model(net1, train_iter)
+    utf.test_based_on_vote(net, train_iter)
 
 
 if __name__ == '__main__':
-    experiment3()
+    experiment1()
