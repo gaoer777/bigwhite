@@ -271,41 +271,43 @@ def compute_loss(p, targets, anchors, l_box=5, l_obj=50):  # predictions, target
     device = p[0].device
     lbox = torch.zeros(1, device=device)  # Tensor(0) 预测的box的损失
     lobj = torch.zeros(1, device=device)  # Tensor(0) 预测的目标损失
-    tcls, tbox, indices, anchors = build_targets(p, targets, anchors)  # targets
-    anchors_vec = anchors[0] / torch.Tensor([[32, 8]])  # 转换为相对尺寸
-    anchors_vec = anchors_vec.to(device)
-    tbox = tbox[0].to(device)
+    tcls, tboxs, indices, anchors_vec = build_targets(p, targets, anchors)  # targets
+    # anchors_vec = anchors[0] / torch.Tensor([[32, 8]])  # 转换为相对尺寸
+    # anchors_vec = anchors_vec.to(device)
+
     red = 'mean'  # Loss reduction (sum or mean)
 
     # Define criteria
     BCEobj = nn.BCEWithLogitsLoss(pos_weight=torch.tensor(1.0, device=device), reduction=red)
 
     # per output
-    b, a, gj, gi = indices  # image_idx, anchor_idx, grid_y, grid_x
-    tobj = torch.zeros_like(p[..., 0], device=device)  # target obj
+    for i in range(3):
+        tbox = tboxs[i].to(device)
+        b, a, gj, gi = indices[i]  # image_idx, anchor_idx, grid_y, grid_x
+        tobj = torch.zeros_like(p[i][..., 0], device=device)  # target obj
 
-    nb = b.shape[0]  # number of positive samples
-    if nb:
-        # 对应匹配到正样本的预测信息
-        ps = p[b, a, gj, gi]  # prediction subset corresponding to targets
+        nb = b.shape[0]  # number of positive samples
+        if nb:
+            # 对应匹配到正样本的预测信息
+            ps = p[i][b, a, gj, gi]  # prediction subset corresponding to targets
 
-        # GIoU
-        pxy = ps[:, :2].sigmoid()
-        pwh = ps[:, 2:4].exp().clamp(max=1E3) * anchors_vec
-        pbox = torch.cat((pxy, pwh), 1)  # predicted box
-        giou = bbox_iou(pbox.t(), tbox, x1y1x2y2=False, GIoU=True)  # giou(prediction, target)
-        lbox += (1.0 - giou).mean()  # giou loss
+            # GIoU
+            pxy = ps[:, :2].sigmoid()
+            pwh = ps[:, 2:4].exp().clamp(max=1E3) * anchors_vec[i].cuda()
+            pbox = torch.cat((pxy, pwh), 1)  # predicted box
+            giou = bbox_iou(pbox.t(), tbox, x1y1x2y2=False, GIoU=True)  # giou(prediction, target)
+            lbox += (1.0 - giou).mean()  # giou loss
 
-        # Obj
-        tobj[b, a, gj, gi] = 1  # giou ratio
-        lobj += BCEobj(p[..., 4], tobj)  # obj loss
+            # Obj
+            tobj[b, a, gj, gi] = 1  # giou ratio
+            lobj += BCEobj(p[i][..., 4], tobj)  # obj loss
 
-        # Append targets to text file
-        # with open('targets.txt', 'a') as file:
-        #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
-    else:
-        lbox = torch.tensor(0, dtype=torch.float32)
-        lobj += BCEobj(p[..., 4], tobj)
+            # Append targets to text file
+            # with open('targets.txt', 'a') as file:
+            #     [file.write('%11.5g ' * 4 % tuple(x) + '\n') for x in torch.cat((txy[i], twh[i]), 1)]
+        else:
+            lbox += 0
+            lobj += BCEobj(p[i][..., 4], tobj).cuda()
 
     # 乘上每种损失的对应权重
     lbox *= l_box
@@ -316,49 +318,54 @@ def compute_loss(p, targets, anchors, l_box=5, l_obj=50):  # predictions, target
             "obj_loss": lobj}
 
 
-def build_targets(p, targets, anchors, iou_t=0.30):
+def build_targets(p, targets, anchor, iou_t=0.30):
     # Build targets for compute_loss(), input targets(image_idx,class,x,y,w,h)
     nt = targets.shape[0]
     tcls, tbox, indices, anch = [], [], [], []
     gain = torch.ones(6, device=targets.device)  # normalized to gridspace gain
 
-    # 注意anchor_vec是anchors缩放到对应特征层上的尺度
-    anchors = torch.Tensor(anchors)
-    # p[i].shape: [batch_size, 3, grid_h, grid_w, num_params]
-    gain[2:] = torch.tensor(p.shape)[[3, 2, 3, 2]]  # xyxy gain
-    na = 3  # number of anchors
-    # [3] -> [3, 1] -> [3, nt]
-    at = torch.arange(na).view(na, 1).repeat(1, nt)  # anchor tensor, same as .repeat_interleave(nt)
+    for i in range(3):
+        # 注意anchor_vec是anchors缩放到对应特征层上的尺度
+        anchors = torch.Tensor(anchor[i])
+        # 图像缩放的尺度
+        scale_w = 512 / p[i].shape[3]
+        scale_h = 64 / p[i].shape[2]
+        # p[i].shape: [batch_size, 3, grid_h, grid_w, num_params]
+        gain[2:] = torch.tensor(p[i].shape)[[3, 2, 3, 2]]  # xyxy gain
+        na = 1  # number of anchors
+        # [3] -> [3, 1] -> [3, nt]
+        at = torch.arange(na).view(na, 1).repeat(1, nt)  # anchor tensor, same as .repeat_interleave(nt)
 
-    # Match targets to anchors
-    a, t = [], targets
-    if nt:  # 如果存在target的话
-        # 通过计算anchor模板与所有target的wh_iou来匹配正样本
-        # j: [3, nt] , iou_t = 0.20 , 计算的是每个anchor（3个）和每个target框（groundtruth框）的粗略的iou
-        j = wh_iou(anchors, t[:, 4:6]) > iou_t  # iou(3,n) = wh_iou(anchors(3,2), gwh(n,2))
-        # t.repeat(na, 1, 1): [nt, 6] -> [3, nt, 6]
-        # 获取正样本对应的anchor模板与target信息
-        a, t = at[j], t.repeat(na, 1, 1)[j]  # filter
+        # Match targets to anchors
+        a, t = [], targets
+        if nt:  # 如果存在target的话
+            # 通过计算anchor模板与所有target的wh_iou来匹配正样本
+            # j: [3, nt] , iou_t = 0.20 , 计算的是每个anchor（3个）和每个target框（groundtruth框）的粗略的iou
+            j = wh_iou(anchors, t[:, 4:6]) > iou_t  # iou(3,n) = wh_iou(anchors(3,2), gwh(n,2))
+            # t.repeat(na, 1, 1): [nt, 6] -> [3, nt, 6]
+            # 获取正样本对应的anchor模板与target信息
+            a, t = at[j], t.repeat(na, 1, 1)[j]  # filter
 
-    # Define
-    # long等于to(torch.int64), 数值向下取整
-    b, c = t[:, :2].long().T  # image_idx, class
-    gxy = t[:, 2:4]  # grid xy
-    gxy[:, 0] /= 32
-    gxy[:, 1] /= 8
-    gwh = t[:, 4:6]  # grid wh
-    gwh[:, 0] /= 32
-    gwh[:, 1] /= 8
-    gij = gxy.long()  # 匹配targets所在的grid cell左上角坐标
-    gi, gj = gij.T  # grid xy indices  gi->x,gj->y
+        # Define
+        # long等于to(torch.int64), 数值向下取整
+        b, c = t[:, :2].long().T  # image_idx, class
+        gxy = t[:, 2:4]  # grid xy
+        gxy[:, 0] /= scale_w
+        gxy[:, 1] /= scale_h
+        gwh = t[:, 4:6]  # grid wh
+        gwh[:, 0] /= scale_w
+        gwh[:, 1] /= scale_h
+        gij = gxy.long()  # 匹配targets所在的grid cell左上角坐标
+        gi, gj = gij.T  # grid xy indices  gi->x,gj->y
+        anchors_vec = anchors / torch.tensor([scale_h, scale_w])
 
-    # Append
-    # gain[3]: grid_h, gain[2]: grid_w
-    # image_idx, anchor_idx, grid indices(y, x)
-    indices = (b, a, gj, gi)
-    tbox.append(torch.cat((gxy - gij, gwh), 1))  # gt box相对anchor的x,y偏移量以及w,h
-    anch.append(anchors[a])  # anchors
-    tcls.append(c)  # class
+        # Append
+        # gain[3]: grid_h, gain[2]: grid_w
+        # image_idx, anchor_idx, grid indices(y, x)
+        indices.append((b, a, gj, gi))
+        tbox.append(torch.cat((gxy - gij, gwh), 1))  # gt box相对anchor的x,y偏移量以及w,h
+        anch.append(anchors_vec[a])  # anchors
+        tcls.append(c)  # class
 
     return tcls, tbox, indices, anch
 
@@ -487,7 +494,7 @@ def non_max_suppression(prediction, conf_thres=0.7, iou_thres=0.6,
     time_limit = 10.0  # seconds to quit after
 
     t = time.time()
-    nc = prediction[0].shape[1] - 5  # number of classes
+    nc = 1  # number of classes
     multi_label &= nc > 1  # multiple labels per box
     output = [None] * prediction.shape[0]
     for xi, x in enumerate(prediction):  # image index, image inference 遍历每张图片

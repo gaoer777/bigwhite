@@ -4,15 +4,15 @@ from torch.nn import functional as F
 
 
 class Self_ChannelAttentionModule(nn.Module):
-    def __init__(self, channel, ratio=9):
+    def __init__(self, channel, groups, ratio=9):
         super(Self_ChannelAttentionModule, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
         self.max_pool = nn.AdaptiveMaxPool2d(1)
 
         self.shared_MLP = nn.Sequential(
-            nn.Conv2d(channel, (channel // ratio) * 3, 1, bias=False, groups=3),
+            nn.Conv2d(channel, (channel // ratio) * 3, 1, bias=False, groups=groups),
             nn.ReLU(),
-            nn.Conv2d((channel // ratio) * 3, channel, 1, bias=False, groups=3)
+            nn.Conv2d((channel // ratio) * 3, channel, 1, bias=False, groups=groups)
         )
         self.sigmoid = nn.Sigmoid()
 
@@ -68,9 +68,9 @@ class Self_SpatialAttentionModule1(nn.Module):
 
 
 class Self_CBAM(nn.Module):
-    def __init__(self, channel, kernel_size, padding):
+    def __init__(self, channel, groups, kernel_size, padding):
         super(Self_CBAM, self).__init__()
-        self.channel_attention = Self_ChannelAttentionModule(channel)
+        self.channel_attention = Self_ChannelAttentionModule(channel, groups=groups)
         self.spatial_attention = Self_SpatialAttentionModule(kernel_size=kernel_size, padding=padding)
 
     def forward(self, x):
@@ -126,15 +126,15 @@ class Cross_CBAM(nn.Module):
 
 
 class Self_CBAMResidual(nn.Module):
-    def __init__(self, input_channels, num_channels, kernel_size, padding, use_1x1conv=False, strides=1):
+    def __init__(self, input_channels, num_channels, kernel_size, padding, groups, use_1x1conv=False, strides=1):
         super().__init__()
-        self.conv1 = nn.Conv2d(input_channels, num_channels, groups=3,
+        self.conv1 = nn.Conv2d(input_channels, num_channels, groups=groups,
                                kernel_size=3, padding=1, stride=strides)
-        self.conv2 = nn.Conv2d(num_channels, num_channels, groups=3,
+        self.conv2 = nn.Conv2d(num_channels, num_channels, groups=groups,
                                kernel_size=3, padding=1)
-        self.cbamself = Self_CBAM(num_channels, kernel_size=kernel_size, padding=padding)
+        self.cbamself = Self_CBAM(num_channels, kernel_size=kernel_size, padding=padding, groups=groups)
         if use_1x1conv:
-            self.conv3 = nn.Conv2d(input_channels, num_channels, groups=3,
+            self.conv3 = nn.Conv2d(input_channels, num_channels, groups=groups,
                                    kernel_size=1, stride=strides)
         else:
             self.conv3 = None
@@ -172,16 +172,16 @@ class Cross_CBAMResidual(nn.Module):
 
 
 class Self_ObjectDetect_CBAMResidual(nn.Module):
-    def __init__(self, input_channels, num_channels, use_1x1conv=False,
+    def __init__(self, input_channels, num_channels, groups, use_1x1conv=False,
                  strides=(1, 1), padding=(1, 4), kernel_size=(3, 9)):
         super().__init__()
-        self.conv1 = nn.Conv2d(input_channels, num_channels, groups=3,
+        self.conv1 = nn.Conv2d(input_channels, num_channels, groups=groups,
                                kernel_size=kernel_size, padding=padding, stride=strides)
-        self.conv2 = nn.Conv2d(num_channels, num_channels, groups=3,
+        self.conv2 = nn.Conv2d(num_channels, num_channels, groups=groups,
                                kernel_size=kernel_size, padding=padding)
-        self.cbamself = Self_CBAM(num_channels, kernel_size=kernel_size, padding=padding)
+        self.cbamself = Self_CBAM(num_channels, kernel_size=kernel_size, padding=padding, groups=groups)
         if use_1x1conv:
-            self.conv3 = nn.Conv2d(input_channels, num_channels, groups=3,
+            self.conv3 = nn.Conv2d(input_channels, num_channels, groups=groups,
                                    kernel_size=kernel_size, stride=strides, padding=padding)
         else:
             self.conv3 = None
@@ -200,13 +200,18 @@ class Self_ObjectDetect_CBAMResidual(nn.Module):
 
 
 class Cross_ObjectDetect_CBAMResidual(nn.Module):
-    def __init__(self, input_channels, num_channels,
+    def __init__(self, input_channels, num_channels, strides, use_1x1conv=False,
                  padding=(1, 4), kernel_size=(3, 9)):
         super().__init__()
         self.conv1 = nn.Conv2d(input_channels, num_channels,
-                               kernel_size=kernel_size, padding=padding)
+                               kernel_size=kernel_size, padding=padding, stride=strides)
         self.conv2 = nn.Conv2d(num_channels, num_channels,
                                kernel_size=kernel_size, padding=padding)
+        if use_1x1conv:
+            self.conv3 = nn.Conv2d(input_channels, num_channels, kernel_size=kernel_size,
+                                   stride=strides, padding=padding)
+        else:
+            self.conv3 = None
         self.cbam = Cross_CBAM(num_channels, kernel_size=kernel_size, padding=padding)
         self.bn1 = nn.BatchNorm2d(num_channels)
         self.bn2 = nn.BatchNorm2d(num_channels)
@@ -215,6 +220,8 @@ class Cross_ObjectDetect_CBAMResidual(nn.Module):
         Y = F.relu(self.bn1(self.conv1(X)))
         Y = self.bn2(self.conv2(Y))
         Y = self.cbam(Y)
+        if self.conv3:
+            X = self.conv3(X)
         Y += X
         return F.relu(Y)
 

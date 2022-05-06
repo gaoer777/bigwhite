@@ -12,6 +12,7 @@ from torch.utils import data
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
 from torch import nn
+import ObjectDetect0412
 
 
 def train(net, train_iter, test_iter, num_epochs, lst, lr, device):
@@ -123,11 +124,14 @@ def train_my_net():
 
 def train_ObjectDtect_net():
     # 加载数据集
-    train_root = r'dataset/dataset0118/images'
+    # train_root = r'dataset/dataset0118/images'
+    train_root = r'dataset/Dataset220324/FDA'
+
     # anchors = [[200, 60], [50, 15], [100, 40]]
-    anchors = [[60, 50], [15, 25], [30, 30]]
+    anchors = [[[60, 50]], [[15, 25]], [[30, 30]]]
     lr, num_epochs = 0.0001, 100
     batch_size = 10
+
     l_box = 3  # 框损失的权重系数
     l_obj = 50  # 目标损失的权重系数
 
@@ -139,13 +143,9 @@ def train_ObjectDtect_net():
     # test_iter = data.DataLoader(test_data, batch_size)
 
     # 训练
-    net = my_net.object_detect_new_cbam_net(anchors=anchors, kernel_size=3, padding=1)
+    # net = my_net.object_detect_new_cbam_net(anchors=anchors, kernel_size=3, padding=1, groups=1)
+    net = ObjectDetect0412.ODAB()
 
-    def init_weights(m):
-        if type(m) == nn.Linear or type(m) == nn.Conv2d:
-            nn.init.xavier_uniform_(m.weight)
-
-    net.apply(init_weights)
     print('training on', device)
     net.to(device)
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
@@ -162,16 +162,17 @@ def train_ObjectDtect_net():
             sum_loss = loss["box_loss"] + loss["obj_loss"]
             sum_loss.backward()
             optimizer.step()
-            temp1 = loss['box_loss'].data.cpu().numpy()
-            temp2 = loss['obj_loss'].data.cpu().numpy()
-            temp3 = sum_loss.data.cpu().numpy()
+            temp1 = loss['box_loss'].data
+            temp2 = loss['obj_loss'].data
+            temp3 = sum_loss.data
             if i % len(train_iter) == 0:
                 print(f"epoch:{epoch}",
-                      f"    box loss:{temp1}",
-                      f"    obj loss:{temp2}",
-                      f"    sum loss:{temp3}")
+                      f"    box loss:{temp1.cpu().numpy()}",
+                      f"    obj loss:{temp2.cpu().numpy()}",
+                      f"    sum loss:{temp3.cpu().numpy()}")
 
     torch.save(net, "object_detect.pth")
 
 
-train_ObjectDtect_net()
+if __name__ == "__main__":
+    train_ObjectDtect_net()
