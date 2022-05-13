@@ -215,15 +215,16 @@ class Cross_ObjectDetect_CBAMResidual(nn.Module):
         self.cbam = Cross_CBAM(num_channels, kernel_size=kernel_size, padding=padding)
         self.bn1 = nn.BatchNorm2d(num_channels)
         self.bn2 = nn.BatchNorm2d(num_channels)
+        self.relu = nn.LeakyReLU()
 
     def forward(self, X):
-        Y = F.relu(self.bn1(self.conv1(X)))
-        Y = self.bn2(self.conv2(Y))
+        Y = self.relu(self.bn1(self.conv1(X)))
+        Y = self.relu(self.bn2(self.conv2(Y)))
         Y = self.cbam(Y)
         if self.conv3:
-            X = self.conv3(X)
+            X = self.relu(self.conv3(X))
         Y += X
-        return F.relu(Y)
+        return Y
 
 
 class Out_Layer(nn.Module):

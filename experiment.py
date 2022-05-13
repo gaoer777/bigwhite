@@ -154,14 +154,14 @@ def experiment6():
     使用目标检测网络训练
     """
     # 数据集
-    train_root = r'dataset/Dataset220324/images'
+    train_root = r'dataset/Dataset220324/train/images'
 
     # 参数
-    anchors = [[[60, 50]], [[15, 25]], [[30, 30]]]
+    anchors = [[[60, 60]], [[40, 40]], [[20, 20]]]
     lr, num_epochs = 0.001, 1000
     batch_size = 10
     l_box = 3  # 框损失的权重系数
-    l_obj = 60  # 目标损失的权重系数
+    l_obj = 100  # 目标损失的权重系数
 
     # 数据加载
     device = utf.try_gpu(0)
@@ -179,13 +179,13 @@ def experiment6():
     # 优化器
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
     # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=0.9994)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.92)
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50, eta_min=1e-6)
     # scheduler = torch.optim.lr_scheduler.CyclicLR(optimizer, base_lr=1e-6, max_lr=lr, mode='exp_range', step_size_up=400, gamma=0.999)
 
     # 记录run log
     writer = SummaryWriter('run_log/experiment6')
-    writer_tag = "04-29-1"
+    writer_tag = "05-12-1"
     min_loss = 1
 
     for epoch in range(num_epochs):

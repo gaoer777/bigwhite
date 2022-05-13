@@ -340,7 +340,7 @@ def build_targets(p, targets, anchor, iou_t=0.30):
         a, t = [], targets
         if nt:  # 如果存在target的话
             # 通过计算anchor模板与所有target的wh_iou来匹配正样本
-            # j: [3, nt] , iou_t = 0.20 , 计算的是每个anchor（3个）和每个target框（groundtruth框）的粗略的iou
+            # j: [3, nt] , iou_t = 0.20 , 计算的是每个anchor（1个）和每个target框（groundtruth框）的粗略的iou
             j = wh_iou(anchors, t[:, 4:6]) > iou_t  # iou(3,n) = wh_iou(anchors(3,2), gwh(n,2))
             # t.repeat(na, 1, 1): [nt, 6] -> [3, nt, 6]
             # 获取正样本对应的anchor模板与target信息
@@ -357,7 +357,7 @@ def build_targets(p, targets, anchor, iou_t=0.30):
         gwh[:, 1] /= scale_h
         gij = gxy.long()  # 匹配targets所在的grid cell左上角坐标
         gi, gj = gij.T  # grid xy indices  gi->x,gj->y
-        anchors_vec = anchors / torch.tensor([scale_h, scale_w])
+        anchors_vec = anchors / torch.tensor([scale_w, scale_h])
 
         # Append
         # gain[3]: grid_h, gain[2]: grid_w
@@ -485,7 +485,7 @@ def non_max_suppression(prediction, conf_thres=0.7, iou_thres=0.6,
     Performs  Non-Maximum Suppression on inference results
     param: prediction[batch, num_anchors, (num_classes+1+4) x num_anchors]
     Returns detections with shape:
-        nx6 (x1, y1, x2, y2, conf, cls)
+        nx6 (x1, y1, x2, y2, conf)
     """
 
     # Settings
@@ -543,8 +543,8 @@ def non_max_suppression(prediction, conf_thres=0.7, iou_thres=0.6,
                 pass
 
         output[xi] = x[i]
-        if (time.time() - t) > time_limit:
-            break  # time limit exceeded
+        # if (time.time() - t) > time_limit:
+        #     break  # time limit exceeded
 
     return output
 
@@ -729,4 +729,38 @@ def test_model(net, test_iter):
     FPR = indexes[3] / (indexes[0] + indexes[3])
     print(f'acc: {test_acc*100:.2f}%,  '
           f'fpr: {FPR*100:.2f}% ')
+
+
+def eval_detected(pred, target, matrics, iou_th=0.5):
+    """
+    测试模型的准确率
+    matrics : TP, FP, FN, TN = 0, 0, 0, 0
+    """
+
+    if target.shape[0] == 0:
+        if pred is not None:
+            matrics[1] += pred.shape[0]
+        return
+
+    if pred is None:
+        matrics[2] += target.shape[0]
+        return
+
+    targ = torch.zeros(target.shape[0], 5)
+    targ[:, 0:4] = target[:, 2:]
+    target = xywh2xyxy(targ)
+    target = target[:, 0:4]
+
+    right = 0
+    for box in target:
+        for pred_box in pred:
+            if bbox_iou(box, pred_box) > iou_th:
+                matrics[0] += 1
+                right += 1
+                continue
+
+    matrics[0] += right
+    matrics[1] += max(0, pred.shape[0] - right)
+    matrics[2] += target.shape[0] - right
+
 

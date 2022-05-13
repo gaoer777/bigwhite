@@ -24,9 +24,10 @@ class convSet(nn.Module):
         super(convSet, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, med_channels, kernel_size=(3, 3), padding=(1, 1))
         self.conv2 = nn.Conv2d(med_channels, 5, kernel_size=(1, 1))
+        self.relu = nn.LeakyReLU()
 
     def forward(self, x):
-        out = self.conv1(x)
+        out = self.relu(self.conv1(x))
         out = self.conv2(out)
         return out
 
@@ -50,18 +51,19 @@ class ODAB(nn.Module):  # object_detect_attention_block
         self.out_layer1 = my_module.Out_Layer(anchors=[[60, 50]], stride_x=64, stride_y=16)
         self.out_layer2 = my_module.Out_Layer(anchors=[[30, 30]], stride_x=16, stride_y=8)
         self.out_layer3 = my_module.Out_Layer(anchors=[[15, 20]], stride_x=4, stride_y=4)
+        self.relu = nn.LeakyReLU()
 
     def forward(self, x):
-        cov1 = self.conv1(x)
+        cov1 = self.relu(self.conv1(x))
         attention1 = self.attention_block1(cov1)
         attention2 = self.attention_block2(attention1)
         attention3 = self.attention_block3(attention2)
         attention4 = self.attention_block4(attention3)
         attention5 = self.attention_block5(attention4)
-        upconv1 = self.upv1(attention5)
-        upconv2 = self.upv2(upconv1)
-        upconv3 = self.upv3(torch.cat((attention3, upconv2), dim=1))
-        upconv4 = self.upv4(upconv3)
+        upconv1 = self.relu(self.upv1(attention5))
+        upconv2 = self.relu(self.upv2(upconv1))
+        upconv3 = self.relu(self.upv3(torch.cat((attention3, upconv2), dim=1)))
+        upconv4 = self.relu(self.upv4(upconv3))
         outconv1 = self.out_conv1(attention5)
         outconv2 = self.out_conv2(torch.cat((attention3, upconv2), dim=1))
         outconv3 = self.out_conv3(torch.cat((attention1, upconv4), dim=1))
