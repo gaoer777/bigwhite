@@ -171,6 +171,32 @@ class Cross_CBAMResidual(nn.Module):
         return F.relu(Y)
 
 
+class Cross_CBAMResidual_for_no_group(nn.Module):
+    def __init__(self, input_channels, num_channels, kernel_size, padding, groups, use_1x1conv=False, strides=1):
+        super().__init__()
+        self.conv1 = nn.Conv2d(input_channels, num_channels,
+                               kernel_size=3, padding=1, stride=strides)
+        self.conv2 = nn.Conv2d(num_channels, num_channels,
+                               kernel_size=3, padding=1)
+        self.cbam = Cross_CBAM(num_channels, kernel_size=kernel_size, padding=padding)
+        self.bn1 = nn.BatchNorm2d(num_channels)
+        self.bn2 = nn.BatchNorm2d(num_channels)
+        if use_1x1conv:
+            self.conv3 = nn.Conv2d(input_channels, num_channels, groups=groups,
+                                   kernel_size=1, stride=strides)
+        else:
+            self.conv3 = None
+
+    def forward(self, X):
+        Y = F.relu(self.bn1(self.conv1(X)))
+        Y = self.bn2(self.conv2(Y))
+        Y = self.cbam(Y)
+        if self.conv3:
+            X = self.conv3(X)
+        Y += X
+        return F.relu(Y)
+
+
 class Self_ObjectDetect_CBAMResidual(nn.Module):
     def __init__(self, input_channels, num_channels, groups, use_1x1conv=False,
                  strides=(1, 1), padding=(1, 4), kernel_size=(3, 9)):

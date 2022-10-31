@@ -5,10 +5,19 @@ import time
 import cv2
 import numpy
 import torch
+import datetime
 import numpy as np
+from torch.utils import data
+
+import my_net
+from draw_box_utils import draw_box
+import datasets
 import matplotlib.pyplot as plt
 import torchvision
 from torch import nn
+from torchvision import transforms
+
+from ObjectDetect0412 import ODAB
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -205,6 +214,33 @@ def evaluate_false_positive_gpu(net, data_iter, device=None):  # @save
 
 
 def evaluations(net, data_iter, device=None):  # @save
+    """使用GPU计算模型在数据集上的混淆矩阵，返回tp, fp, tn, fn, y.numel()。"""
+    if isinstance(net, torch.nn.Module):
+        net.eval()  # 设置为评估模式
+        if not device:
+            device = next(iter(net.parameters())).device
+    # 正确预测的数量，总预测的数量
+    metric = Accumulator(5)
+    for i, (X, y) in enumerate(data_iter):
+        if isinstance(X, list):
+            X = [x.to(device) for x in X]
+        else:
+            X = X.to(device)
+        y = y.to(device)
+        y_hat = net(X)
+        y_temp = y_hat.argmax(axis=1)
+        tp = y_temp[(y_temp == 0) & (y == 0)]
+        fp = y_temp[(y_temp == 0) & (y == 1)]
+        tn = y_temp[(y_temp == 1) & (y == 1)]
+        fn = y_temp[(y_temp == 1) & (y == 0)]
+        metric.add(tp.numel(), fp.numel(), tn.numel(), fn.numel(), y.numel())
+    return metric
+
+
+def evaluationsWithAugument(net, data_iter, device=None):  # @save
+    """
+    TODO:使用增强技术推理
+    """
     """使用GPU计算模型在数据集上的混淆矩阵，返回tp, fp, tn, fn, y.numel()。"""
     if isinstance(net, torch.nn.Module):
         net.eval()  # 设置为评估模式
@@ -463,8 +499,7 @@ def get_targets(labels):
             os.path.exists(path)
             with open(path, 'r') as f:
                 if os.path.getsize(path):
-                    l = np.array([x.lstrip('[').rstrip(']').split(',') for x in f.read().splitlines()],
-                                 dtype=np.float32)  # l(l_x, u_y, w, h, area)
+                    l = np.array([x.lstrip('[').rstrip(']').split(',') for x in f.read().splitlines()], dtype=np.float32)  # l(l_x, u_y, w, h, area)
                     l[:, :2] += l[:, 2:4]/2  # 将l_x, u_y转换为中心点的坐标
                     l[:, 4] = image_idx  # 将第五列的数据设置为图片张数
                     info = l[:, [4, 0, 1, 2, 3]]
@@ -479,7 +514,46 @@ def get_targets(labels):
     return torch.from_numpy(targets)
 
 
-def non_max_suppression(prediction, conf_thres=0.7, iou_thres=0.6,
+def get_targets_COCO(targets, n):
+    """
+    返回所有图像中的真实目标的box：
+    targets[image_idx,obj,x,y,w,h]
+    其中obj为1，表示为检测的对象，x和y为box的中心点坐标，w和h为box的宽和高
+    x、y、w、h都为绝对值
+    """
+    image_idx = 0
+    tg = numpy.zeros((1, 5))  # (image_idx,class,x,y,w,h)
+    i = 0
+    for target in targets:
+        target = target[:n[i], :]
+        i += 1
+        target[:, 0] = image_idx
+        tg = np.concatenate([tg, target], axis=0)
+        image_idx += 1
+
+    tg = np.insert(tg, 1, values=1, axis=1)
+    tg = np.delete(tg, 0, axis=0)
+    tg[:, 2:] = xyxy2xywh(tg[:, 2:])
+
+    return torch.from_numpy(tg)
+
+
+def getOneTarget(labels):
+    """
+    返回所有图像中的真实目标的box：
+    targets[image_idx,obj,x,y,w,h]
+    其中obj为1，表示为检测的对象，x和y为box的中心点坐标，w和h为box的宽和高
+    x、y、w、h都为绝对值
+    """
+    targets = []
+    path = labels
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            targets = np.array([x.lstrip('[').rstrip(']').split(' ') for x in f.read().splitlines()], dtype=np.float32)
+    return targets
+
+
+def non_max_suppression_for_single(prediction, conf_thres=0.7, iou_thres=0.6,
                         multi_label=True, classes=None, agnostic=False, max_num=10):
     """
     Performs  Non-Maximum Suppression on inference results
@@ -549,6 +623,71 @@ def non_max_suppression(prediction, conf_thres=0.7, iou_thres=0.6,
     return output
 
 
+def non_max_suppression_for_batch(prediction, conf_thres=0.1, iou_thres=0.6,
+                        multi_label=True, classes=None, agnostic=False, max_num=100):
+    """
+    Performs  Non-Maximum Suppression on inference results
+
+    param: prediction[batch, num_anchors, (num_classes+1+4) x num_anchors]
+    Returns detections with shape:
+        nx6 (x1, y1, x2, y2, conf, cls)
+    """
+
+    # Settings
+    merge = False  # merge for best mAP
+    min_wh, max_wh = 2, 4096  # (pixels) minimum and maximum box width and height
+    time_limit = 10000.0  # seconds to quit after
+
+    t = time.time()
+    nc = prediction[0].shape[1] - 5  # number of classes
+    multi_label &= nc > 1  # multiple labels per box
+    output = [None] * prediction.shape[0]
+    for xi, x in enumerate(prediction):  # image index, image inference 遍历每张图片
+        # Apply constraints
+        x = x[x[:, 4] > conf_thres]  # confidence 根据obj confidence虑除背景目标
+        x = x[((x[:, 2:4] > min_wh) & (x[:, 2:4] < max_wh)).all(1)]  # width-height 虑除小目标
+
+        # If none remain process next image
+        if not x.shape[0]:
+            continue
+
+        # Compute conf
+        # x[..., 5:] *= x[..., 4:5]  # conf = obj_conf * cls_conf
+
+        # Box (center x, center y, width, height) to (x1, y1, x2, y2)
+        box = xywh2xyxy(x)
+
+        x = box
+
+        # If none remain process next image
+        n = x.shape[0]  # number of boxes
+        if not n:
+            continue
+
+        # Sort by confidence
+        # x = x[x[:, 4].argsort(descending=True)]
+
+        # Batched NMS
+        boxes, scores = x[:, :4].clone(), x[:, 4]  # boxes (offset by class), scores
+        i = torchvision.ops.nms(boxes, scores, iou_thres)
+        i = i[:max_num]  # 最多只保留前max_num个目标信息
+        if merge and (1 < n < 3E3):  # Merge NMS (boxes merged using weighted mean)
+            try:  # update boxes as boxes(i,4) = weights(i,n) * boxes(n,4)
+                iou = box_iou(boxes[i], boxes) > iou_thres  # iou matrix
+                weights = iou * scores[None]  # box weights
+                x[i, :4] = torch.mm(weights, x[:, :4]).float() / weights.sum(1, keepdim=True)  # merged boxes
+                # i = i[iou.sum(1) > 1]  # require redundancy
+            except:  # possible CUDA error https://github.com/ultralytics/yolov3/issues/1139
+                print(x, i, x.shape, i.shape)
+                pass
+
+        output[xi] = x[i]
+        if (time.time() - t) > time_limit:
+            break  # time limit exceeded
+
+    return output
+
+
 def xyxy2xywh(x):
     # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] where xy1=top-left, xy2=bottom-right
     y = torch.zeros_like(x) if isinstance(x, torch.Tensor) else np.zeros_like(x)
@@ -567,6 +706,16 @@ def xywh2xyxy(x):
     y[:, 2] = x[:, 0] + x[:, 2] / 2  # bottom right x
     y[:, 3] = x[:, 1] + x[:, 3] / 2  # bottom right y
     y[:, 4] = x[:, 4]
+    return y
+
+
+def xywh2xyxy_(x):
+    # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
+    y = torch.zeros_like(x) if isinstance(x, torch.Tensor) else np.zeros_like(x)
+    y[:, 0] = x[:, 0] - x[:, 2] / 2  # top left x
+    y[:, 1] = x[:, 1] - x[:, 3] / 2  # top left y
+    y[:, 2] = x[:, 0] + x[:, 2] / 2  # bottom right x
+    y[:, 3] = x[:, 1] + x[:, 3] / 2  # bottom right y
     return y
 
 
@@ -653,18 +802,27 @@ def letterbox(img: np.ndarray,
     return img, ratio, (dw, dh)
 
 
-def train(net, train_iter, test_iter, num_epochs, lr, writer, tag, device):
+def train(net, train_iter, test_iter, num_epochs, lr, weight, writer, tag, tag_model_save, device):
     """用GPU训练模型。"""
-
-    print('training on', device)
+    print(f'net : {tag}  training on', device)
     net.to(device)
+
     optimizer = torch.optim.Adam(net.parameters(), lr=lr)
-    loss = nn.CrossEntropyLoss()
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.956)  # 0.956^100 = 0.01111
+
+    loss = nn.CrossEntropyLoss(weight=weight)
+
+    now = datetime.datetime.now()
+    timer = now.strftime("%Y-%m-%d")
+
     train_l, train_acc, num_batches = 0., 0., len(train_iter)
+    highest_acc, highest_recall, highest_F1, highest_Precision = 0., 0., 0., 0.
+
     for epoch in range(num_epochs):
         # 训练损失之和，训练准确率之和，范例数
         metric = Accumulator(3)
         net.train()
+        # 一个epoch的训练
         for i, (X, y) in enumerate(train_iter):
             optimizer.zero_grad()
             X, y = X.to(device), y.to(device)
@@ -674,22 +832,53 @@ def train(net, train_iter, test_iter, num_epochs, lr, writer, tag, device):
             optimizer.step()
             with torch.no_grad():
                 metric.add(l * X.shape[0], accuracy(y_hat, y), X.shape[0])
-            train_l = metric[0] / metric[2]
-            train_acc = metric[1] / metric[2]
-            if (i + 1) % ((num_batches // 5)+1) == 0 or i == num_batches - 1:
+            train_l = metric[0] / metric[2]  # average loss
+            train_acc = metric[1] / metric[2]  # average accuracy
+            if (i + 1) % ((num_batches // 5)+1) == 0 or i == num_batches - 1:  # log values every five iter
                 writer.add_scalar(f'{tag}/train_loss', train_l, global_step=epoch + (i + 1) / num_batches)
                 writer.add_scalar(f'{tag}/train_acc', train_acc, global_step=epoch + (i + 1) / num_batches)
-        # 评价指标
-        indexes = evaluations(net, test_iter)
-        test_acc = (indexes[0] + indexes[2])/indexes[4]
-        FPR = indexes[3]/(indexes[0] + indexes[3])
-        writer.add_scalar(f'{tag}/test_acc', test_acc, global_step=epoch)
-        writer.add_scalar(f'{tag}/FPR', FPR, global_step=epoch)
+        # renew learning rate
+        scheduler.step()
+
+        # 评价指标 every two epoch
         if epoch % 2 == 0:
-            print(f'loss {train_l:.3f}, train acc {train_acc:.3f}, '
-                  f'test acc {test_acc*100:.4f}%,'
-                  f'FPR {FPR*100:.4f}%,'
-                  f'processed {epoch * 100 / num_epochs:.2f}%')
+            indexes = evaluations(net, test_iter)
+
+            test_acc = (indexes[0] + indexes[2]) / indexes[4]
+            Recall = indexes[0] / (indexes[0] + indexes[3] + 0.0001)
+            Precision = indexes[0] / (indexes[0] + indexes[1] + 0.0001)
+            F1 = 2 * Precision * Recall / (Precision + Recall)
+            highest_acc = max(highest_acc, test_acc)
+            highest_recall = max(highest_recall, Recall)
+            highest_Precision = max(highest_Precision, Precision)
+
+            writer.add_scalar(f'{tag}/test_acc', test_acc, global_step=epoch)
+            writer.add_scalar(f'{tag}/Recall', Recall, global_step=epoch)
+            writer.add_scalar(f'{tag}/F1', F1, global_step=epoch)
+            writer.add_scalar(f'{tag}/Precision', Precision, global_step=epoch)
+
+            print(f'loss {train_l:.4f}, train acc {train_acc*100:.2f}, '
+                  f'test acc {test_acc*100:.2f}%,'
+                  f'Recall {Recall*100:.2f}%,'
+                  f'F1 {F1:.3f},'
+                  f'epoch {epoch}')
+
+            # save_model when model are stable and have a greater result
+            if F1 > highest_F1:
+                highest_F1 = max(highest_F1, F1)
+                torch.save(net.state_dict(), f"./run_log/{tag_model_save}/"  # save as: eg. 2022-10-17-mynet-156.pth
+                                             f"{timer}-{tag}-{epoch}-F1{highest_F1*100:.0f}.pth")
+
+    print(f'highest_acc: {highest_acc:.4f}, highest_recall: {highest_recall:.4f}, '
+          f'highest_F1: {highest_F1:.4f}, highest_Precision: {highest_Precision:.4f}')
+
+
+def customLoss(y_hat, y):
+    """
+    自定义loss
+    """
+    loss = nn.CrossEntropyLoss(reduction='None')
+    loss_value = loss(y_hat, y)
 
 
 def test_based_on_vote(net, test_iter):
@@ -764,3 +953,134 @@ def eval_detected(pred, target, matrics, iou_th=0.5):
     matrics[2] += target.shape[0] - right
 
 
+def trainDetect(net, device, test_root, save_path, save_flag):
+    category_index = {1: "defect"}
+    matric = [0, 0, 0, 0]
+    transform = transforms.Compose([transforms.ToTensor()])
+    train_data = datasets.LoadCOCOImagesAndLabels(test_root, transform=transform)
+    train_iter = data.DataLoader(train_data, 1)
+
+    net.eval()
+    with torch.no_grad():
+        # init 创建一张图片初始化模型
+        # img = torch.zeros((1, 3, 63, 512), device=device)
+        # model(img)
+
+        # 读取测试图片
+        for i, (img, target, z) in enumerate(train_iter):
+            # 得到预测结果
+            img = img.to(device)
+            pred = net(img)  # only get inference result
+
+            pred = torch.cat([pred[0][0], pred[1][0], pred[2][0]], dim=1)
+            # 对预测结果进行过滤，采用非极大值抑制的方法
+            # conf_thres滤除一部分低于这个阈值的目标框，代表是否为目标的置信度
+            pred = non_max_suppression(pred, conf_thres=0.01, max_num=10,
+                                       iou_thres=0.2, multi_label=True)[0]
+
+            # 评价指标
+            target = get_targets_COCO(target, z)
+            target = torch.squeeze(target, 0)
+            eval_detected(pred, target, matric)
+
+            if pred is None:
+                print("No target detected.")
+                continue
+
+            bboxes = pred[:, :4].detach().cpu().numpy()
+            scores = pred[:, 4].detach().cpu().numpy()
+            classes = np.ones(pred.shape[0], dtype=np.int32)
+
+            # 将坐标画在原图上
+            img = torch.squeeze(img, 0)
+            img = torch.clamp(img*255, 0, 255).cpu().int().numpy()
+            img = img.transpose(1, 2, 0).astype(np.uint8)
+            img_o = draw_box(img, bboxes, classes, scores, category_index)
+            # plt.imshow(img_o)
+            # plt.show()
+
+            s_path = save_path + '/' + save_flag + '_' + str(i) + '.png'
+            img_o.save(s_path)
+
+    precision = matric[0] / (matric[0] + matric[1] + 1)
+    recall = matric[0] / (matric[0] + matric[2] + 1)
+    # print(f"precision: {precision*100:.2f}%,  recall: {recall*100:.2f}%")
+
+    return img_o, precision, recall
+
+
+def loadSingleImage(path):
+    """
+    输入图像路径，返回可以直接送进网络的图像矩阵
+    """
+    img = cv2.resize(cv2.imread(path), (64, 64))  # BGR
+
+    # Convert BGR to RGB, and HWC to CHW(3x512x512)
+    img = img[:, :, ::-1].transpose(2, 0, 1)
+    img = np.ascontiguousarray(img)
+    img = torch.from_numpy(img).to('cuda').float()
+    img /= 255.0  # scale (0, 255) to (0, 1)
+    img = img.unsqueeze(0)  # add batch dimension
+    return img
+
+def viz(module, input, output):
+    x = output[0]
+    # 最多显示4张图
+    min_num = np.minimum(4, x.size()[0])
+    for i in range(min_num):
+        plt.subplot(1, 4, i + 1)
+        plt.imshow(x[i].cpu().detach().numpy())
+        plt.colorbar()
+    plt.show()
+
+
+def lookintoNet():
+    # t = transforms.Compose([transforms.ToPILImage(),
+    #                         transforms.Resize((64, 64)),
+    #                         transforms.ToTensor(),
+    #                         # transforms.Normalize(mean=[0.485, 0.456, 0.406],
+    #                         #                      std=[0.229, 0.224, 0.225])
+    #                         ])
+
+    t = transforms.Compose([transforms.ToTensor(),
+                            # transforms.RandomRotation(180, expand=1),
+                            # transforms.RandomVerticalFlip(),
+                            # transforms.RandomHorizontalFlip(),
+                            transforms.Resize((64, 64))])
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    net1 = my_net.new_cbam_net(kernel_size=3, padding=1)
+    # net1 = models.resnet18(pretrained=False, num_classes=2)
+    net1.load_state_dict(torch.load('./models/experiment3/2022-10-10-my_net-136.pth'))
+    # net1.load_state_dict(torch.load('./models/experiment3/2022-09-30-resnet18-66.pth'))
+
+    model = net1.to(device).eval()
+
+    for name, m in model.named_modules():
+        # if not isinstance(m, torch.nn.ModuleList) and \
+        #         not isinstance(m, torch.nn.Sequential) and \
+        #         type(m) in torch.nn.__dict__.values():
+        # 这里只对卷积层的feature map进行显示
+        if isinstance(m, torch.nn.Conv2d) and m.kernel_size[0] > 1 and m.stride[0] > 1:
+            m.register_forward_hook(viz)
+
+    path_defects = r'D:\gsw\Projects\WOLIU\bigwhite\dataset\Dataset220927\new_rgb2\defects'
+    imgps = os.listdir(path_defects)
+
+    # # LOAD IMAGE METHOD1
+    # transform_test = transforms.Compose([transforms.ToTensor(),
+    #                                      transforms.Resize((64, 64))])
+    # test_data = ImageFolder(path_defects, transform=transform_test)
+    # test_iter = data.DataLoader(test_data, 1)
+
+    # LOAD IMAGE METHOD2
+    for imgp in imgps:
+        path = path_defects + '/' + imgp
+        img = loadSingleImage(path)
+        y = model(img.cuda())
+        print(y)
+
+    # for i, (img, l) in enumerate(test_iter):
+    #     y = model(img.cuda())
+    #     print(y)

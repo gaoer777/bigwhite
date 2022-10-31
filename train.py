@@ -99,21 +99,21 @@ def train_my_net():
     # test_root = r'dataset211118_4/test_data'
     # train_root = r'dataset211118_3/dataset211118_3_fdt/train_data'
     # test_root = r'dataset211118_3/dataset211118_3_fdt/test_data'
-    train_root = r'dataset211213_4_128/train_data'
-    test_root = r'dataset211213_4_128/test_data'
+    train_root = r'dataset/Dataset220217/dataset_220217rgb/train_data'
+    test_root = r'dataset/Dataset220217/dataset_220217rgb/test_data'
 
-    transform = transforms.Compose([transforms.Resize((64, 128)),
+    transform = transforms.Compose([transforms.Resize((64, 64)),
                                     # transforms.Grayscale(1),
                                     transforms.ToTensor()])
     train_data = ImageFolder(train_root, transform=transform)
     test_data = ImageFolder(test_root, transform=transform)
-    batch_size = 64
+    batch_size = 32
     train_iter = data.DataLoader(train_data, batch_size, shuffle=True, sampler=None)
-    test_iter = data.DataLoader(test_data, batch_size)
+    test_iter = data.DataLoader(test_data, len(test_data))
 
     # 训练
     lr, num_epochs = 0.0005, 50
-    net = my_net.new_cbam_net()
+    net = my_net.new_cbam_net(kernel_size=3, padding=1)
     # net = Resnet.resnet18()
     # net = SEResnet.serenet18()
     # net = CBAMResnet.CBAMResnet_18()
@@ -174,5 +174,8 @@ def train_ObjectDtect_net():
     torch.save(net, "object_detect.pth")
 
 
+# def pretrainObjectNet():
+
+
 if __name__ == "__main__":
-    train_ObjectDtect_net()
+    train_my_net()

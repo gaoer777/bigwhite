@@ -89,9 +89,10 @@ class ResBlock_CBAM(nn.Module):
         return out
 
 
-model = ResBlock_CBAM(in_places=16, places=4)
-print(model)
+if __name__ == '__main__':
+    model = ResBlock_CBAM(in_places=16, places=4)
+    print(model)
 
-inputs = torch.randn(1, 16, 64, 64)
-out = model(inputs)
-print(out.shape)
+    inputs = torch.randn(1, 16, 64, 64)
+    out = model(inputs)
+    print(out.shape)

@@ -16,7 +16,7 @@ def main():
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    tag = '05-12-1'
+    tag = '06-20-1'
     model = ODAB()
     model.load_state_dict(torch.load(f"./models/{tag}-detect.pth"))
     model.to(device)
@@ -48,7 +48,7 @@ def main():
             pred = torch.cat([pred[0][0], pred[1][0], pred[2][0]], dim=1)
             # 对预测结果进行过滤，采用非极大值抑制的方法
             # conf_thres滤除一部分低于这个阈值的目标框，代表是否为目标的置信度
-            pred = utf.non_max_suppression(pred, conf_thres=0.9, max_num=10,
+            pred = utf.non_max_suppression(pred, conf_thres=0.5, max_num=10,
                                            iou_thres=0.2, multi_label=True)[0]
 
             # 评价指标
@@ -56,7 +56,7 @@ def main():
             utf.eval_detected(pred, target, matric)
 
             if pred is None:
-                # print("No target detected.")
+                print("No target detected.")
                 continue
 
             # process detections
@@ -67,11 +67,12 @@ def main():
             scores = pred[:, 4].detach().cpu().numpy()
             classes = np.ones(pred.shape[0], dtype=np.int32)
 
-            # img_o = draw_box(img_o[:, :, ::-1], bboxes, classes, scores, category_index)
+            # 将坐标画在原图上
+            img_o = draw_box(img_o[:, :, ::-1], bboxes, classes, scores, category_index)
             # plt.imshow(img_o)
             # plt.show()
 
-            # img_o.save('./dataset/Dataset220324/tested/' + f'{tag}-' + img_path.split('\\')[-1])
+            img_o.save(f'./dataset/Dataset220324/tested/{tag}/' + img_path.split('\\')[-1])
 
     precision = matric[0] / (matric[0] + matric[1])
     recall = matric[0] / (matric[0] + matric[2])
